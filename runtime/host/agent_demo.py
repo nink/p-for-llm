@@ -19,16 +19,23 @@ SYSTEM_PROMPT = (
     "Search before guessing a line. Use at most 4 turns. Replace only after a matching search/read. Use F after a tool result.\n"
     "Errors look like E:code. Keep replies short."
 )
-DEFAULT_TASK = "In services/cache/cache.ini, change cache_policy from lru to lfu."
+DEFAULT_TASK = "In config/cache.ini, change cache_mode from lazy to eager."
+DEFAULT_PATH = "config/cache.ini"
+INITIAL_CONTENT = """[service]
+name = cache
+environment = prod
+cache_mode = lazy
+cache_size = 4096
+backend = redis
+"""
+EXPECTED_CONTENT = INITIAL_CONTENT.replace("cache_mode = lazy", "cache_mode = eager")
 
 
 class VirtualFiles:
     """A deliberately closed file store used by the demo; it never touches disk."""
 
     def __init__(self) -> None:
-        self.files = {
-            "services/cache/cache.ini": "[cache]\ncache_policy = lru\nmax_entries = 256\n",
-        }
+        self.files = {DEFAULT_PATH: INITIAL_CONTENT}
         self.observed: set[tuple[str, int]] = set()
 
     def _get(self, path: str) -> list[str] | None:
@@ -125,9 +132,9 @@ def run(args: argparse.Namespace) -> None:
             result = device.text(
                 transcript + "\n",
                 requested_tokens=args.max_new_tokens,
-                temperature=0.0,
-                top_k=1,
-                random_state=1,
+                temperature=0.2,
+                top_k=5,
+                random_state=42,
             )
             response = result.text.strip()
             command = response.splitlines()[0].strip() if response else ""
@@ -156,6 +163,10 @@ def run(args: argparse.Namespace) -> None:
         if final_reply:
             print(f"final: {final_reply}")
         files.show()
+        if args.task == DEFAULT_TASK and (
+            not final_reply or files.files[DEFAULT_PATH] != EXPECTED_CONTENT
+        ):
+            raise RuntimeError("the Agent did not complete the default task")
 
 
 def main() -> int:

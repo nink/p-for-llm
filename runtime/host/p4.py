@@ -474,5 +474,5 @@ def format_chat_prompt(messages: list[dict[str, str]], *, add_generation_prompt:
             raise ValueError(f"unsupported chat role: {role!r}")
         parts.append(f"<|im_start|>{role}\n{content}<|im_end|>\n")
     if add_generation_prompt:
-        parts.append("<|im_start|>assistant\n<think>\n\n</think>\n\n")
+        parts.append("<|im_start|>assistant\n")
     return "".join(parts)
