@@ -8,9 +8,9 @@ import sys
 from pathlib import Path
 
 try:
-    from .p4 import P4Device, ProtocolError, ensure_ready, format_chat_prompt
+    from .p4 import CONTEXT_LENGTH, P4Device, ProtocolError, ensure_ready, format_chat_prompt
 except ImportError:
-    from p4 import P4Device, ProtocolError, ensure_ready, format_chat_prompt
+    from p4 import CONTEXT_LENGTH, P4Device, ProtocolError, ensure_ready, format_chat_prompt
 
 
 def parse_args() -> argparse.Namespace:
@@ -42,7 +42,8 @@ def run(args: argparse.Namespace) -> None:
             print(f"ready: loaded {layout.path}")
         print("type /help for commands")
 
-        history: list[dict[str, str]] = []
+        continuing = False
+        session_tokens = 0
         while True:
             try:
                 line = input("you> ")
@@ -61,14 +62,16 @@ def run(args: argparse.Namespace) -> None:
                     print_help()
                 elif command == "/clear":
                     device.clear()
-                    history.clear()
+                    continuing = False
+                    session_tokens = 0
                     print("session cleared")
                 elif command == "/reload":
                     if layout is None:
                         print("reload requires --artifact")
                         continue
                     device.reload(layout)
-                    history.clear()
+                    continuing = False
+                    session_tokens = 0
                     print("model reloaded and session cleared")
                 elif command in {"/exit", "/quit"}:
                     return
@@ -76,8 +79,17 @@ def run(args: argparse.Namespace) -> None:
                     print(f"unknown command: {line}")
                 continue
 
-            messages = history + [{"role": "user", "content": line}]
-            prompt = format_chat_prompt(messages)
+            if continuing:
+                prompt = f"<|im_end|>\n<|im_start|>user\n{line}<|im_end|>\n<|im_start|>assistant\n"
+            else:
+                prompt = format_chat_prompt([{"role": "user", "content": line}])
+
+            if session_tokens + len(prompt.encode("utf-8")) + args.max_new_tokens > CONTEXT_LENGTH:
+                device.clear()
+                continuing = False
+                session_tokens = 0
+                prompt = format_chat_prompt([{"role": "user", "content": line}])
+
             print("assistant> ", end="", flush=True)
             try:
                 result = device.text(
@@ -92,7 +104,10 @@ def run(args: argparse.Namespace) -> None:
                 print(f"\nerror: {error}")
                 continue
             print()
-            history.extend(({"role": "user", "content": line}, {"role": "assistant", "content": result.text}))
+            if result.session_evicted:
+                session_tokens = 0
+            session_tokens += result.prompt_tokens + result.generated_tokens
+            continuing = True
 
 
 def main() -> int:
