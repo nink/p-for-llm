@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "name": "llmm-pretraining",
+  "tokenizer_path": "assets/qwen3.5-english-tokenizer/tokenizer.json",
+  "download_base_url": "https://huggingface.co/datasets",
+  "profiles": {
+    "local": {
+      "purpose": "Local pipeline and training correctness checks only.",
+      "download_policy": "never",
+      "sources": [
+        {
+          "name": "tinystories_validation",
+          "repository": "roneneldan/TinyStories",
+          "revision": "f54c09fd23315a6f9c86f9dc80f725de7d8f9c64",
+          "path": "TinyStories-valid.txt",
+          "local_path": "data/raw/tokenizer-validation/tinystories/TinyStories-valid.txt",
+          "format": "text",
+          "document_separator": "<|endoftext|>",
+          "size_bytes": 19447282,
+          "sha256": "94e431816c4cce81ff71e4408ff8d3bda9a42e8d2663986697c3954288cb38b4",
+          "license": [
+            "cdla-sharing-1.0"
+          ]
+        }
+      ]
+    },
+    "formal": {
+      "purpose": "Approximately 1B-token architecture-development pretraining.",
+      "repository": "HuggingFaceTB/smollm-corpus",
+      "revision": "3ba9d605774198c5868892d7a8deda78031a781f",
+      "download_policy": "manual_only",
+      "limits": {
+        "max_file_bytes": 3000000000,
+        "max_total_bytes": 4000000000
+      },
+      "sources": [
+        {
+          "name": "fineweb_edu_dedup",
+          "path": "fineweb-edu-dedup/train-00000-of-00234.parquet",
+          "local_path": "data/raw/pretraining/smollm-corpus/fineweb-edu-dedup/train-00000-of-00234.parquet",
+          "format": "parquet",
+          "text_column": "text",
+          "size_bytes": 2395121191,
+          "sha256": "220d0c36f13f24046f080dcd9a9339862d6a0e43f214dd430ed20552c265e309",
+          "license": [
+            "odc-by-1.0"
+          ]
+        },
+        {
+          "name": "cosmopedia_v2",
+          "path": "cosmopedia-v2/train-00000-of-00104.parquet",
+          "local_path": "data/raw/pretraining/smollm-corpus/cosmopedia-v2/train-00000-of-00104.parquet",
+          "format": "parquet",
+          "text_column": "text",
+          "size_bytes": 1174424341,
+          "sha256": "5a25721146377d6e7f288c244e991df93e672b8cc3e535fd4aac5da4cdb1491d",
+          "license": [
+            "apache-2.0"
+          ]
+        }
+      ]
+    }
+  }
+}

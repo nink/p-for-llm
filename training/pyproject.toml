@@ -1,0 +1,27 @@
+[project]
+name = "p-for-llm-training"
+version = "0.1.0"
+description = "Reproducible training implementation for PFor"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "liger-kernel==0.8.1",
+    "numpy==2.5.1",
+    "pyarrow==25.0.0",
+    "tokenizers==0.22.2",
+    "torch==2.11.0+cu126",
+    "torchao==0.17.0",
+    "tqdm==4.70.0",
+]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu126" }
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true

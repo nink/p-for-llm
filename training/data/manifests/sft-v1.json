@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "name": "sft-v1",
+  "purpose": "First instruct-stage static SFT sources: broad Magpie instruction data and UltraChat dialogue data.",
+  "download_base_url": "https://huggingface.co/datasets",
+  "limits": {
+    "max_file_bytes": 244131731,
+    "max_total_bytes": 1294607485
+  },
+  "profiles": {
+    "sft-v1": {
+      "purpose": "Assistant-only static SFT data for the second training wave.",
+      "download_policy": "manual_only",
+      "sources": [
+        {
+          "name": "magpie_pro_300k_filtered:train-00000",
+          "repository": "Magpie-Align/Magpie-Pro-300K-Filtered",
+          "revision": "523df96eb7474e97bca6f378b3baa372a4735fcc",
+          "path": "data/train-00000-of-00003.parquet",
+          "local_path": "magpie-pro-300k-filtered/data/train-00000-of-00003.parquet",
+          "size_bytes": 187600397,
+          "sha256": "04fe4f10a78a4c64705fd91fe4c551833fbf600be71c95ad4b4b87f9416dae55",
+          "license": [
+            "Apache-2.0"
+          ],
+          "source_url": "https://huggingface.co/datasets/Magpie-Align/Magpie-Pro-300K-Filtered"
+        },
+        {
+          "name": "magpie_pro_300k_filtered:train-00001",
+          "repository": "Magpie-Align/Magpie-Pro-300K-Filtered",
+          "revision": "523df96eb7474e97bca6f378b3baa372a4735fcc",
+          "path": "data/train-00001-of-00003.parquet",
+          "local_path": "magpie-pro-300k-filtered/data/train-00001-of-00003.parquet",
+          "size_bytes": 187400258,
+          "sha256": "a7b4aa632d45b0a1f540696ee4c65cb59bcba27fb174183e20d4efc9ea928701",
+          "license": [
+            "Apache-2.0"
+          ],
+          "source_url": "https://huggingface.co/datasets/Magpie-Align/Magpie-Pro-300K-Filtered"
+        },
+        {
+          "name": "magpie_pro_300k_filtered:train-00002",
+          "repository": "Magpie-Align/Magpie-Pro-300K-Filtered",
+          "revision": "523df96eb7474e97bca6f378b3baa372a4735fcc",
+          "path": "data/train-00002-of-00003.parquet",
+          "local_path": "magpie-pro-300k-filtered/data/train-00002-of-00003.parquet",
+          "size_bytes": 187578711,
+          "sha256": "d9689d09442ef2dee777c387cbbf0dc232a33161e01488852b6c31788df8410f",
+          "license": [
+            "Apache-2.0"
+          ],
+          "source_url": "https://huggingface.co/datasets/Magpie-Align/Magpie-Pro-300K-Filtered"
+        },
+        {
+          "name": "ultrachat_200k:train_sft-00000",
+          "repository": "HuggingFaceH4/ultrachat_200k",
+          "revision": "8049631c405ae6576f93f445c6b8166f76f5505a",
+          "path": "data/train_sft-00000-of-00003-a3ecf92756993583.parquet",
+          "local_path": "ultrachat-200k/data/train_sft-00000-of-00003-a3ecf92756993583.parquet",
+          "size_bytes": 243999189,
+          "sha256": "afa8fa7426081b2a0e732fb50dbb5cd402a28ad5f0dbe66c0d996d63e7220727",
+          "license": [
+            "Apache-2.0"
+          ],
+          "source_url": "https://huggingface.co/datasets/HuggingFaceH4/ultrachat_200k"
+        },
+        {
+          "name": "ultrachat_200k:train_sft-00001",
+          "repository": "HuggingFaceH4/ultrachat_200k",
+          "revision": "8049631c405ae6576f93f445c6b8166f76f5505a",
+          "path": "data/train_sft-00001-of-00003-0a1804bcb6ae68c6.parquet",
+          "local_path": "ultrachat-200k/data/train_sft-00001-of-00003-0a1804bcb6ae68c6.parquet",
+          "size_bytes": 243897199,
+          "sha256": "c8230190bc8b29084c974ff32f05589b458fad1908fc4b2fb2b9e1e9f7921f03",
+          "license": [
+            "Apache-2.0"
+          ],
+          "source_url": "https://huggingface.co/datasets/HuggingFaceH4/ultrachat_200k"
+        },
+        {
+          "name": "ultrachat_200k:train_sft-00002",
+          "repository": "HuggingFaceH4/ultrachat_200k",
+          "revision": "8049631c405ae6576f93f445c6b8166f76f5505a",
+          "path": "data/train_sft-00002-of-00003-ee46ed25cfae92c6.parquet",
+          "local_path": "ultrachat-200k/data/train_sft-00002-of-00003-ee46ed25cfae92c6.parquet",
+          "size_bytes": 244131731,
+          "sha256": "6fe7d2a5e95cf660f972ecaf304aa5632d7f53384e4b0e0d0f44d9c96733c03e",
+          "license": [
+            "Apache-2.0"
+          ],
+          "source_url": "https://huggingface.co/datasets/HuggingFaceH4/ultrachat_200k"
+        }
+      ]
+    }
+  }
+}

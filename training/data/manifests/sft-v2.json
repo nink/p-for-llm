@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "name": "sft-v2",
+  "purpose": "Third-wave short-model instruction data from Smol-SmolTalk, Tulu instruction-following personas, and SQuAD v2.",
+  "download_base_url": "https://huggingface.co/datasets",
+  "limits": {
+    "max_file_bytes": 231879938,
+    "max_total_bytes": 978017630
+  },
+  "profiles": {
+    "sft-v2": {
+      "purpose": "Assistant-only static SFT data for the third training wave.",
+      "download_policy": "manual_only",
+      "sources": [
+        {
+          "name": "smol_smoltalk:train-00000",
+          "repository": "HuggingFaceTB/smol-smoltalk",
+          "revision": "f73fe857d519ff6ac5af2ea67c4d3834da7b8bcc",
+          "path": "data/train-00000-of-00004.parquet",
+          "local_path": "smol-smoltalk/data/train-00000-of-00004.parquet",
+          "size_bytes": 229710350,
+          "sha256": "498cd4580014f42c40cfde066573564ed28e3e1548a5566715b615f5ea932856",
+          "license": [
+            "Apache-2.0"
+          ],
+          "source_url": "https://huggingface.co/datasets/HuggingFaceTB/smol-smoltalk"
+        },
+        {
+          "name": "smol_smoltalk:train-00001",
+          "repository": "HuggingFaceTB/smol-smoltalk",
+          "revision": "f73fe857d519ff6ac5af2ea67c4d3834da7b8bcc",
+          "path": "data/train-00001-of-00004.parquet",
+          "local_path": "smol-smoltalk/data/train-00001-of-00004.parquet",
+          "size_bytes": 230298184,
+          "sha256": "5412c03df579fc7dd7d06c7f5249627d99d0621882fb8f2cd5c13582eb2a80f6",
+          "license": [
+            "Apache-2.0"
+          ],
+          "source_url": "https://huggingface.co/datasets/HuggingFaceTB/smol-smoltalk"
+        },
+        {
+          "name": "smol_smoltalk:train-00002",
+          "repository": "HuggingFaceTB/smol-smoltalk",
+          "revision": "f73fe857d519ff6ac5af2ea67c4d3834da7b8bcc",
+          "path": "data/train-00002-of-00004.parquet",
+          "local_path": "smol-smoltalk/data/train-00002-of-00004.parquet",
+          "size_bytes": 230587255,
+          "sha256": "aefcac6571abf275b4e1629baa01f326c0fe279d35cd0349b7439319923815a7",
+          "license": [
+            "Apache-2.0"
+          ],
+          "source_url": "https://huggingface.co/datasets/HuggingFaceTB/smol-smoltalk"
+        },
+        {
+          "name": "smol_smoltalk:train-00003",
+          "repository": "HuggingFaceTB/smol-smoltalk",
+          "revision": "f73fe857d519ff6ac5af2ea67c4d3834da7b8bcc",
+          "path": "data/train-00003-of-00004.parquet",
+          "local_path": "smol-smoltalk/data/train-00003-of-00004.parquet",
+          "size_bytes": 231879938,
+          "sha256": "c15edfca888c9924a626dad7b7f4e9f08d8f406f997ac13be46bc9be0a6192db",
+          "license": [
+            "Apache-2.0"
+          ],
+          "source_url": "https://huggingface.co/datasets/HuggingFaceTB/smol-smoltalk"
+        },
+        {
+          "name": "tulu_3_instruction_following:train",
+          "repository": "allenai/tulu-3-sft-personas-instruction-following",
+          "revision": "fe0c7d350c9b4542b8d829a6f1daa1c259f0ba0e",
+          "path": "data/train-00000-of-00001.parquet",
+          "local_path": "tulu-3-sft-personas-instruction-following/data/train-00000-of-00001.parquet",
+          "size_bytes": 39171921,
+          "sha256": "19a16c5f1649d367f69899b3cfadbbeb5ffef91f24e20c6617588bdd87cd3e60",
+          "license": [
+            "ODC-BY-1.0"
+          ],
+          "source_url": "https://huggingface.co/datasets/allenai/tulu-3-sft-personas-instruction-following"
+        },
+        {
+          "name": "squad_v2:train",
+          "repository": "rajpurkar/squad_v2",
+          "revision": "3ffb306f725f7d2ce8394bc1873b24868140c412",
+          "path": "squad_v2/train-00000-of-00001.parquet",
+          "local_path": ".downloads/squad-v2/train-00000-of-00001.parquet",
+          "size_bytes": 16369982,
+          "sha256": "f6da32ffb482ff463ad056477740d1bb284b96a45db3a08bee6a225ca6abf291",
+          "license": [
+            "CC-BY-SA-4.0"
+          ],
+          "source_url": "https://huggingface.co/datasets/rajpurkar/squad_v2",
+          "processing": {
+            "format": "messages",
+            "answerable": "all",
+            "unanswerable_hash_fraction": 0.05,
+            "unanswerable_hash_namespace": "llmm-squad-v2-unanswerable-v1"
+          }
+        }
+      ]
+    }
+  }
+}

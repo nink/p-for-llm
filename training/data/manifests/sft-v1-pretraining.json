@@ -1,0 +1,194 @@
+{
+  "schema_version": 1,
+  "name": "sft-v1-pretraining",
+  "purpose": "Non-overlapping causal pretraining additions for the SFT-v1 training root.",
+  "download_base_url": "https://huggingface.co/datasets",
+  "limits": {
+    "max_file_bytes": 1177797537,
+    "max_total_bytes": 7586623336
+  },
+  "profiles": {
+    "sft-v1-pretraining": {
+      "purpose": "Causal replay sources included under the SFT-v1 root.",
+      "download_policy": "manual_only",
+      "sources": [
+        {
+          "name": "dclm:global-shard_04_of_10/local-shard_3_of_10/shard_00000003_processed.jsonl.zst",
+          "repository": "mlfoundations/dclm-baseline-1.0",
+          "revision": "a3b142c183aebe5af344955ae20836eb34dcf69b",
+          "path": "global-shard_04_of_10/local-shard_3_of_10/shard_00000003_processed.jsonl.zst",
+          "local_path": "pretraining/dclm/global-shard_04_of_10/local-shard_3_of_10/shard_00000003_processed.jsonl.zst",
+          "format": "jsonl_zstd",
+          "text_column": "text",
+          "size_bytes": 196297541,
+          "sha256": "d699841875f0e10c834fb23ebf730556c83bee76db911257d52025d6233a1b0f"
+        },
+        {
+          "name": "dclm:global-shard_05_of_10/local-shard_1_of_10/shard_00000220_processed.jsonl.zst",
+          "repository": "mlfoundations/dclm-baseline-1.0",
+          "revision": "a3b142c183aebe5af344955ae20836eb34dcf69b",
+          "path": "global-shard_05_of_10/local-shard_1_of_10/shard_00000220_processed.jsonl.zst",
+          "local_path": "pretraining/dclm/global-shard_05_of_10/local-shard_1_of_10/shard_00000220_processed.jsonl.zst",
+          "format": "jsonl_zstd",
+          "text_column": "text",
+          "size_bytes": 353261556,
+          "sha256": "45b593c8084f82c11d5d235e1097a98dd40dbca9f8693a53121498307642e925"
+        },
+        {
+          "name": "dclm:global-shard_06_of_10/local-shard_7_of_10/shard_00000265_processed.jsonl.zst",
+          "repository": "mlfoundations/dclm-baseline-1.0",
+          "revision": "a3b142c183aebe5af344955ae20836eb34dcf69b",
+          "path": "global-shard_06_of_10/local-shard_7_of_10/shard_00000265_processed.jsonl.zst",
+          "local_path": "pretraining/dclm/global-shard_06_of_10/local-shard_7_of_10/shard_00000265_processed.jsonl.zst",
+          "format": "jsonl_zstd",
+          "text_column": "text",
+          "size_bytes": 219503001,
+          "sha256": "b36421a45484e26a022bb7525aec8e35c797ccd4cbad75bd509faead2aa9d923"
+        },
+        {
+          "name": "dclm:global-shard_05_of_10/local-shard_7_of_10/shard_00000124_processed.jsonl.zst",
+          "repository": "mlfoundations/dclm-baseline-1.0",
+          "revision": "a3b142c183aebe5af344955ae20836eb34dcf69b",
+          "path": "global-shard_05_of_10/local-shard_7_of_10/shard_00000124_processed.jsonl.zst",
+          "local_path": "pretraining/dclm/global-shard_05_of_10/local-shard_7_of_10/shard_00000124_processed.jsonl.zst",
+          "format": "jsonl_zstd",
+          "text_column": "text",
+          "size_bytes": 272172762,
+          "sha256": "034b0f067aa69e34a23d7ce9702245a977cb739a8cb0b03a7b79ae77c3e1a29b"
+        },
+        {
+          "name": "dclm:global-shard_01_of_10/local-shard_2_of_10/shard_00000245_processed.jsonl.zst",
+          "repository": "mlfoundations/dclm-baseline-1.0",
+          "revision": "a3b142c183aebe5af344955ae20836eb34dcf69b",
+          "path": "global-shard_01_of_10/local-shard_2_of_10/shard_00000245_processed.jsonl.zst",
+          "local_path": "pretraining/dclm/global-shard_01_of_10/local-shard_2_of_10/shard_00000245_processed.jsonl.zst",
+          "format": "jsonl_zstd",
+          "text_column": "text",
+          "size_bytes": 224449391,
+          "sha256": "d41257b718d648d86ccb5e2eedb80f463f1b529ff8288ebff92e20898251fe8e"
+        },
+        {
+          "name": "dclm:global-shard_04_of_10/local-shard_6_of_10/shard_00000052_processed.jsonl.zst",
+          "repository": "mlfoundations/dclm-baseline-1.0",
+          "revision": "a3b142c183aebe5af344955ae20836eb34dcf69b",
+          "path": "global-shard_04_of_10/local-shard_6_of_10/shard_00000052_processed.jsonl.zst",
+          "local_path": "pretraining/dclm/global-shard_04_of_10/local-shard_6_of_10/shard_00000052_processed.jsonl.zst",
+          "format": "jsonl_zstd",
+          "text_column": "text",
+          "size_bytes": 224680236,
+          "sha256": "9d165208f5f8ef2ba17f229d71e5161b97cb71bf974ffbe993255aee80d11956"
+        },
+        {
+          "name": "dclm:global-shard_08_of_10/local-shard_3_of_10/shard_00000091_processed.jsonl.zst",
+          "repository": "mlfoundations/dclm-baseline-1.0",
+          "revision": "a3b142c183aebe5af344955ae20836eb34dcf69b",
+          "path": "global-shard_08_of_10/local-shard_3_of_10/shard_00000091_processed.jsonl.zst",
+          "local_path": "pretraining/dclm/global-shard_08_of_10/local-shard_3_of_10/shard_00000091_processed.jsonl.zst",
+          "format": "jsonl_zstd",
+          "text_column": "text",
+          "size_bytes": 280140614,
+          "sha256": "055effbd1be378f113e73cf6ac1ee9e90eefb3e7c2b2e3f4af9ca8918b01252e"
+        },
+        {
+          "name": "dclm:global-shard_06_of_10/local-shard_5_of_10/shard_00000094_processed.jsonl.zst",
+          "repository": "mlfoundations/dclm-baseline-1.0",
+          "revision": "a3b142c183aebe5af344955ae20836eb34dcf69b",
+          "path": "global-shard_06_of_10/local-shard_5_of_10/shard_00000094_processed.jsonl.zst",
+          "local_path": "pretraining/dclm/global-shard_06_of_10/local-shard_5_of_10/shard_00000094_processed.jsonl.zst",
+          "format": "jsonl_zstd",
+          "text_column": "text",
+          "size_bytes": 273533969,
+          "sha256": "af7f467d026f98be4f7d616c2af5c453417f7b3cf01625ad87effccfa7c3446f"
+        },
+        {
+          "name": "dclm:global-shard_02_of_10/local-shard_8_of_10/shard_00000181_processed.jsonl.zst",
+          "repository": "mlfoundations/dclm-baseline-1.0",
+          "revision": "a3b142c183aebe5af344955ae20836eb34dcf69b",
+          "path": "global-shard_02_of_10/local-shard_8_of_10/shard_00000181_processed.jsonl.zst",
+          "local_path": "pretraining/dclm/global-shard_02_of_10/local-shard_8_of_10/shard_00000181_processed.jsonl.zst",
+          "format": "jsonl_zstd",
+          "text_column": "text",
+          "size_bytes": 271729048,
+          "sha256": "2be12a1809289a6b96219217dd37d330afbec1360e3fc2915985733d3f2fef5e"
+        },
+        {
+          "name": "dclm:global-shard_01_of_10/local-shard_1_of_10/shard_00000139_processed.jsonl.zst",
+          "repository": "mlfoundations/dclm-baseline-1.0",
+          "revision": "a3b142c183aebe5af344955ae20836eb34dcf69b",
+          "path": "global-shard_01_of_10/local-shard_1_of_10/shard_00000139_processed.jsonl.zst",
+          "local_path": "pretraining/dclm/global-shard_01_of_10/local-shard_1_of_10/shard_00000139_processed.jsonl.zst",
+          "format": "jsonl_zstd",
+          "text_column": "text",
+          "size_bytes": 247477939,
+          "sha256": "3dabaa25697673b8105a20ede8d3aa3488422757313579ff9362bf127cb7f051"
+        },
+        {
+          "name": "cosmopedia_v2:train-00035",
+          "repository": "HuggingFaceTB/smollm-corpus",
+          "revision": "3ba9d605774198c5868892d7a8deda78031a781f",
+          "path": "cosmopedia-v2/train-00035-of-00104.parquet",
+          "local_path": "pretraining/cosmopedia_v2/cosmopedia-v2/train-00035-of-00104.parquet",
+          "format": "parquet",
+          "text_column": "text",
+          "size_bytes": 1175618490,
+          "sha256": "dc368024be9892642e473388cf1dea5e3989676e60cdb435194a7e39f4c389b6"
+        },
+        {
+          "name": "cosmopedia_v2:train-00051",
+          "repository": "HuggingFaceTB/smollm-corpus",
+          "revision": "3ba9d605774198c5868892d7a8deda78031a781f",
+          "path": "cosmopedia-v2/train-00051-of-00104.parquet",
+          "local_path": "pretraining/cosmopedia_v2/cosmopedia-v2/train-00051-of-00104.parquet",
+          "format": "parquet",
+          "text_column": "text",
+          "size_bytes": 1176621119,
+          "sha256": "2e28e5895a7154799a1875059c54379c199615bfd8b8eb02d0ba1438ceed3580"
+        },
+        {
+          "name": "cosmopedia_v2:train-00025",
+          "repository": "HuggingFaceTB/smollm-corpus",
+          "revision": "3ba9d605774198c5868892d7a8deda78031a781f",
+          "path": "cosmopedia-v2/train-00025-of-00104.parquet",
+          "local_path": "pretraining/cosmopedia_v2/cosmopedia-v2/train-00025-of-00104.parquet",
+          "format": "parquet",
+          "text_column": "text",
+          "size_bytes": 1177132871,
+          "sha256": "f8346628272980ecf2b8fb069296aaa487d46cdb3a1c21b28f2e37b2b0c95120"
+        },
+        {
+          "name": "pes2o:train-0083",
+          "repository": "allenai/peS2o",
+          "revision": "636a503e44a3ca1b58e01fb61eab0825cd574de0",
+          "path": "data/v3/train-0083-of-0136.zst",
+          "local_path": "pretraining/pes2o/data/v3/train-0083-of-0136.zst",
+          "format": "jsonl_zstd",
+          "text_column": "text",
+          "size_bytes": 1052070697,
+          "sha256": "993912c9d7ae8520fa83d255d2f2737c3ab752754e71b7940045e8d963f3504f"
+        },
+        {
+          "name": "python_edu_cleaned:train-00012",
+          "repository": "Avelina/python-edu-cleaned",
+          "revision": "3fedf55e02e72dd1fd68963f991f5e91adcb0f8d",
+          "path": "data/train-00012-of-00027.parquet",
+          "local_path": "pretraining/python-edu-cleaned/data/train-00012-of-00027.parquet",
+          "format": "parquet",
+          "text_column": "text",
+          "size_bytes": 221490378,
+          "sha256": "51bc09a023a40e7d821dba3aec59bd2fa780226db294843a23704e4728bcbe49"
+        },
+        {
+          "name": "python_edu_cleaned:train-00002",
+          "repository": "Avelina/python-edu-cleaned",
+          "revision": "3fedf55e02e72dd1fd68963f991f5e91adcb0f8d",
+          "path": "data/train-00002-of-00027.parquet",
+          "local_path": "pretraining/python-edu-cleaned/data/train-00002-of-00027.parquet",
+          "format": "parquet",
+          "text_column": "text",
+          "size_bytes": 220443724,
+          "sha256": "5f9928316e0969768ae1dc1d004401980ea36234bda5474349a1f0422de454cb"
+        }
+      ]
+    }
+  }
+}

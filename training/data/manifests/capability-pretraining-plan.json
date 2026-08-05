@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "name": "llmm-capability-v1",
+  "total_tokens": 6000000000,
+  "waves": [
+    {
+      "name": "foundation",
+      "target_tokens": 2400000000,
+      "sequence_length": 256,
+      "batch_size": 32,
+      "sources": [
+        {
+          "name": "fineweb_edu_dedup",
+          "target_tokens": 1200000000,
+          "selection": {
+            "kind": "hashed_shard_permutation",
+            "shard_count": 234,
+            "take": 12,
+            "namespace": "llmm-capability-v1/fineweb-shard"
+          }
+        },
+        {
+          "name": "dclm",
+          "target_tokens": 480000000,
+          "selection": {
+            "kind": "uniform_full_range"
+          }
+        },
+        {
+          "name": "cosmopedia_v2",
+          "target_tokens": 360000000,
+          "selection": {
+            "kind": "prefix_shards",
+            "start": 0,
+            "take": 2
+          }
+        },
+        {
+          "name": "pes2o",
+          "target_tokens": 240000000,
+          "selection": {
+            "kind": "uniform_full_range"
+          }
+        },
+        {
+          "name": "wikipedia_en",
+          "target_tokens": 120000000,
+          "selection": {
+            "kind": "document_hash"
+          }
+        }
+      ]
+    },
+    {
+      "name": "capability",
+      "target_tokens": 2100000000,
+      "sequence_length": 512,
+      "batch_size": 32,
+      "sources": [
+        {
+          "name": "fineweb_edu_dedup",
+          "target_tokens": 525000000,
+          "selection": {
+            "kind": "hashed_shard_permutation",
+            "shard_count": 234,
+            "skip": 12,
+            "take": 8,
+            "namespace": "llmm-capability-v1/fineweb-shard"
+          }
+        },
+        {
+          "name": "dclm",
+          "target_tokens": 315000000,
+          "selection": {
+            "kind": "uniform_full_range"
+          }
+        },
+        {
+          "name": "cosmopedia_v2",
+          "target_tokens": 315000000,
+          "selection": {
+            "kind": "prefix_shards",
+            "start": 2,
+            "take": 2
+          }
+        },
+        {
+          "name": "finemath_4plus",
+          "target_tokens": 525000000,
+          "selection": {
+            "kind": "uniform_full_range"
+          }
+        },
+        {
+          "name": "python_edu_cleaned",
+          "target_tokens": 315000000,
+          "selection": {
+            "kind": "uniform_full_range"
+          }
+        },
+        {
+          "name": "pes2o",
+          "target_tokens": 105000000,
+          "selection": {
+            "kind": "uniform_full_range"
+          }
+        }
+      ]
+    },
+    {
+      "name": "specialization",
+      "target_tokens": 1500000000,
+      "sequence_length": 1024,
+      "batch_size": 32,
+      "sources": [
+        {
+          "name": "fineweb_edu_dedup",
+          "target_tokens": 150000000,
+          "selection": {
+            "kind": "hashed_shard_permutation",
+            "shard_count": 234,
+            "skip": 20,
+            "take": 4,
+            "namespace": "llmm-capability-v1/fineweb-shard"
+          }
+        },
+        {
+          "name": "cosmopedia_v2",
+          "target_tokens": 225000000,
+          "selection": {
+            "kind": "prefix_shards",
+            "start": 4,
+            "take": 1
+          }
+        },
+        {
+          "name": "finemath_4plus",
+          "target_tokens": 450000000,
+          "selection": {
+            "kind": "uniform_full_range"
+          }
+        },
+        {
+          "name": "python_edu_cleaned",
+          "target_tokens": 375000000,
+          "selection": {
+            "kind": "uniform_full_range"
+          }
+        },
+        {
+          "name": "pes2o",
+          "target_tokens": 150000000,
+          "selection": {
+            "kind": "uniform_full_range"
+          }
+        },
+        {
+          "name": "wikipedia_en",
+          "target_tokens": 150000000,
+          "selection": {
+            "kind": "document_hash"
+          }
+        }
+      ]
+    }
+  ]
+}

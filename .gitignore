@@ -1,0 +1,6 @@
+.entroly/
+__pycache__/
+*.py[cod]
+runtime/esp32-p4/build*/
+runtime/esp32-p4/sdkconfig
+runtime/esp32-p4/assets/*.bin

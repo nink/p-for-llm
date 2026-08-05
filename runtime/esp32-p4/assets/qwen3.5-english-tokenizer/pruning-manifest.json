@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "source": {
+    "repository": "Qwen/Qwen3.5-0.8B-Base",
+    "revision": "dc7cdfe2ee4154fa7e30f5b51ca41bfa40174e68",
+    "tokenizer_sha256": "fe000e3ed39ed12b8d2481d527d44f93c65d37e87645d2dcc80d1bf9d50d2927",
+    "tokenizer_config_sha256": "e611fbccc7c29ef3b1cafb1cb7ea548d189968632901d678fd62be68c47885de"
+  },
+  "policy": {
+    "type": "merge-order-ascii-pruning",
+    "target_vocab_size": 32768,
+    "max_seq_len": 1024,
+    "keep_added_tokens": [
+      "<|endoftext|>",
+      "<|im_start|>",
+      "<|im_end|>",
+      "<tool_call>",
+      "</tool_call>",
+      "<tool_response>",
+      "</tool_response>",
+      "<|fim_prefix|>",
+      "<|fim_middle|>",
+      "<|fim_suffix|>",
+      "<|fim_pad|>",
+      "<|repo_name|>",
+      "<|file_sep|>",
+      "<think>",
+      "</think>"
+    ]
+  },
+  "result": {
+    "source_base_vocab_size": 248044,
+    "source_merge_count": 247587,
+    "retained_base_vocab_size": 32753,
+    "retained_merge_count": 32497,
+    "retained_added_token_count": 15,
+    "target_vocab_size": 32768,
+    "skipped_non_ascii_merges": 237
+  },
+  "files": {
+    "tokenizer.json": {
+      "size_bytes": 1331737,
+      "sha256": "35bd0d23242520d31f0ba3c5587599164a380ad4f5f61fb16ca92aaef82eb491"
+    },
+    "vocab.json": {
+      "size_bytes": 627195,
+      "sha256": "3d16b5f43a149c774f327b0b1966d4fa8498b8158411eac8710d02fb007131de"
+    },
+    "merges.txt": {
+      "size_bytes": 276638,
+      "sha256": "07845201eef58c26fc5e1c0c1da45f540706119abe8c37efd70e02b6fc7a1c8a"
+    },
+    "tokenizer_config.json": {
+      "size_bytes": 11617,
+      "sha256": "e3795adb0cbf067e49849a006890d730cfe01c93ba23de314e4469eae94a5399"
+    }
+  }
+}

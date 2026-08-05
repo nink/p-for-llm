@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "name": "sft-v2-pretraining",
+  "purpose": "One non-overlapping DCLM causal-replay shard for the third SFT wave.",
+  "download_base_url": "https://huggingface.co/datasets",
+  "selection": {
+    "namespace": "llmm-sft-v2-replay",
+    "method": "SHA256(namespace NUL path) ascending within global-shard_03_of_10/local-shard_0_of_10 first 100 files, after excluding all earlier replay paths",
+    "counts": {
+      "dclm": 1
+    }
+  },
+  "limits": {
+    "max_file_bytes": 257828529,
+    "max_total_bytes": 257828529
+  },
+  "profiles": {
+    "sft-v2-pretraining": {
+      "purpose": "Causal replay included under the SFT-v2 training root.",
+      "download_policy": "manual_only",
+      "sources": [
+        {
+          "name": "dclm:global-shard_03_of_10/local-shard_0_of_10/shard_00000081_processed.jsonl.zst",
+          "repository": "mlfoundations/dclm-baseline-1.0",
+          "revision": "a3b142c183aebe5af344955ae20836eb34dcf69b",
+          "path": "global-shard_03_of_10/local-shard_0_of_10/shard_00000081_processed.jsonl.zst",
+          "local_path": "pretraining/dclm/global-shard_03_of_10/local-shard_0_of_10/shard_00000081_processed.jsonl.zst",
+          "format": "jsonl_zstd",
+          "text_column": "text",
+          "size_bytes": 257828529,
+          "sha256": "f20398f065bb47075ba4165513fc2ccf5fe642bcdf0aefe64f0bf423b1edb889",
+          "license": [
+            "CC-BY-4.0"
+          ],
+          "source_url": "https://huggingface.co/datasets/mlfoundations/dclm-baseline-1.0"
+        }
+      ]
+    }
+  }
+}
