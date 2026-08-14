@@ -4,6 +4,20 @@ This document is the first product/engineering goal for the **nink/p-for-llm** f
 
 Upstream PFor exposes a native context window of **1,024 tokens** (KV/RAM limited on ESP32-P4). We are **not** trying to raise native KV to 8K in this goal. We are raising **effective** context via compression.
 
+## Approach: achieve, then optimize
+
+Ship a **simple working path** first. Do not start with LLMLingua-class token classifiers, on-device distillers, or finetuning.
+
+| Phase | Goal | Done when |
+| --- | --- | --- |
+| **0 — Bring-up** | Stock PFor chat on ESP32-P4 via this fork | `chat.py` answers short prompts on hardware |
+| **1 — Achievable MVP** | Host-side **extractive / budget trim** to ~8:1 into the 1,024 window | Long paste + question works end-to-end; ratio logged |
+| **2 — Optimize** | Better retention (query-aware keep, schema pack, optional LLMLingua-style / small compressor) | Higher eval score at same ~8:1 (or stable quality at higher ratio) |
+
+**Phase 1 method (intentionally boring):** keep question + headings + sentences with numbers/names; drop filler until under budget. Good enough to prove effective long context.
+
+**Phase 2+:** only after Phase 1 is measurable — smarter compression, rolling `MEM`, on-device compress, finetune on pack-state dialect.
+
 ## Target
 
 | Metric | Goal |
@@ -90,25 +104,32 @@ PKT  ████                              ~1000 tokens  →  PFor (1024 win
 
 ## What success looks like
 
-1. User (or tool) provides long text + a question.
-2. Fork compresses to a short packet (schema and/or extractive summary).
-3. Board generates an answer using only that packet + question.
-4. Measured ratio ≈ 8:1 on a fixed eval set, with acceptable factual retention (numbers, names, negations preserved).
+### Phase 1 (ship this)
 
-Multi-turn: compress running history into a rolling `MEM` blob so sessions stay long without growing the native window.
+1. User provides long text (~8k tokens) + a question on the host.
+2. Fork trims/extracts to a packet that fits the native window with reply budget.
+3. Board answers using only that packet + question.
+4. Logs show compression ratio near **8:1** (exact quality secondary to “it works”).
 
-## Non-goals (for this milestone)
+### Phase 2 (optimize later)
+
+- Query-aware retention (keep what the question needs)
+- Structured pack state / rolling `MEM` for multi-turn
+- Optional stronger compressors; measure quality on a fixed eval set
+
+## Non-goals (for Phase 1)
 
 - Expanding on-chip KV cache to true 8K context
 - Domain apps (vehicle diagnostics, appliances, education packs)
 - Replacing upstream training/runtime architecture
+- Best-in-class compression research
 
 ## Planned code touchpoints
 
-- `runtime/host/compress.py` — compression API (8:1 target)
+- `runtime/host/compress.py` — Phase 1: budgeted extractive compress API
 - `runtime/host/chat.py` — optional `--compress` path before `device.text(...)`
-- Eval fixtures under `docs/` or `runtime/host/testdata/` — ratio + quality checks
+- Simple ratio logging; eval fixtures when optimizing (Phase 2)
 
 ## Status
 
-**Planned.** Hardware bring-up (stock PFor on ESP32-P4) comes first; then host-side compression on this fork.
+**Planned.** Phase 0 hardware bring-up first; then Phase 1 host-side MVP; optimize only after that works.
