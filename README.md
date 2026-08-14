@@ -1,6 +1,14 @@
-# PFor
+# PFor (nink fork)
 
 [中文文档](README_ZH.md)
+
+Fork of [cyfrit/p-for-llm](https://github.com/cyfrit/p-for-llm) maintained at [nink/p-for-llm](https://github.com/nink/p-for-llm).
+
+### Fork goal 1 — context compression
+
+Upstream native context is **1,024 tokens**. This fork’s first goal is **~8:1 host-side context compression** so the board can condition on ~8k tokens of source material without enlarging on-chip KV.
+
+See **[docs/CONTEXT-COMPRESSION.md](docs/CONTEXT-COMPRESSION.md)**.
 
 ## PLE-MoE-W1.58A8
 
