@@ -17,13 +17,18 @@ except ImportError:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--port", required=True, help="USB Serial/JTAG port (Espressif), not the CH343 console UART")
+    parser.add_argument("--port", required=True, help="CH343 UART port (same COM as flash.py, e.g. COM5)")
     parser.add_argument("--artifact", type=Path, help="release model artifact used when the board is not loaded")
     parser.add_argument("--max-new-tokens", type=int, default=128)
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top-k", type=int, default=20)
     parser.add_argument("--seed", type=int, default=1)
-    parser.add_argument("--timeout", type=float, default=1200.0, help="seconds; PSRAM USB load needs ~10+ minutes")
+    parser.add_argument("--timeout", type=float, default=1200.0, help="seconds; UART PSRAM load needs ~10+ minutes if SD missing")
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="pulse RTS to reboot the board (clears PSRAM; avoid unless needed)",
+    )
     parser.add_argument(
         "--compress",
         action="store_true",
@@ -55,7 +60,7 @@ def run(args: argparse.Namespace) -> None:
     if args.compress and not source_text:
         raise ValueError("--compress requires --context-file")
 
-    with P4Device.connect(args.port, timeout=args.timeout) as device:
+    with P4Device.connect(args.port, timeout=args.timeout, reset=args.reset) as device:
         print("handshake / load model (PSRAM transfer can take several minutes) ...", flush=True)
         layout = ensure_ready(device, args.artifact)
         device.clear()

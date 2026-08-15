@@ -84,7 +84,7 @@ class SerialTransport:
         self.fd: int | None = None
         self._serial = None
 
-    def open(self) -> "SerialTransport":
+    def open(self, *, reset: bool = False) -> "SerialTransport":
         if os.name == "nt":
             try:
                 import serial
@@ -108,12 +108,13 @@ class SerialTransport:
                 self._serial.dtr = False
                 self._serial.rts = False
                 time.sleep(0.05)
-                # Pulse RTS to reboot into application firmware, then release.
-                self._serial.rts = True
-                time.sleep(0.05)
-                self._serial.rts = False
-                # ESP32-P4 app needs ~2–3s after reset before LLMHOST is ready.
-                time.sleep(3.0)
+                if reset:
+                    # Pulse RTS to reboot into application firmware, then release.
+                    self._serial.rts = True
+                    time.sleep(0.05)
+                    self._serial.rts = False
+                    # ESP32-P4 app needs ~2–3s after reset before LLMHOST is ready.
+                    time.sleep(3.0)
                 self._serial.reset_input_buffer()
                 self._serial.reset_output_buffer()
                 time.sleep(0.2)
@@ -340,8 +341,8 @@ class P4Device:
         self._closed = False
 
     @classmethod
-    def connect(cls, port: str, timeout: float = 30.0) -> "P4Device":
-        return cls(SerialTransport(port, timeout).open())
+    def connect(cls, port: str, timeout: float = 30.0, *, reset: bool = False) -> "P4Device":
+        return cls(SerialTransport(port, timeout).open(reset=reset))
 
     def _read_magic(self, expected: set[bytes]) -> bytes:
         if not expected or any(len(magic) != 8 for magic in expected):

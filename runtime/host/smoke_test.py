@@ -20,11 +20,16 @@ def main() -> int:
     parser.add_argument("--prompt", default="What is the capital of France?")
     parser.add_argument("--max-new-tokens", type=int, default=64)
     parser.add_argument("--timeout", type=float, default=1200.0)
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="reboot board via RTS (forces PSRAM reload unless SD provides weights)",
+    )
     args = parser.parse_args()
 
     print(f"connecting to {args.port} ...", flush=True)
-    with P4Device.connect(args.port, timeout=args.timeout) as device:
-        print("handshake / load model (PSRAM transfer can take several minutes) ...", flush=True)
+    with P4Device.connect(args.port, timeout=args.timeout, reset=args.reset) as device:
+        print("handshake / load model if needed ...", flush=True)
         layout = ensure_ready(device, args.artifact)
         print(f"ready: {layout.path if layout else 'board payload'}", flush=True)
         device.clear()

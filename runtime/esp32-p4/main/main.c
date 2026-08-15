@@ -17,6 +17,11 @@
 #endif
 #if LLMM_HOST_UART
 #include "driver/uart.h"
+#include "driver/gpio.h"
+#include "driver/sdmmc_host.h"
+#include "esp_vfs_fat.h"
+#include "sdmmc_cmd.h"
+#include "sd_pwr_ctrl_by_on_chip_ldo.h"
 #else
 #include "driver/usb_serial_jtag.h"
 #endif
@@ -32,6 +37,10 @@
 #define LLMM_HOST_UART_TX_GPIO 37
 #define LLMM_HOST_UART_RX_GPIO 38
 #define LLMM_HOST_UART_BAUD 460800
+#define LLMM_SD_MOUNT_POINT "/sdcard"
+#define LLMM_SD_PAYLOAD_PATH "/sdcard/pfor-psram.bin"
+#define LLMM_SD_PWR_GPIO GPIO_NUM_45
+#define LLMM_SD_LDO_CHANNEL_ID 4
 #endif
 
 #define LLMM_CHAT_END_TOKEN 32755U
@@ -904,6 +913,112 @@ static uint32_t llmm_session_tokens(const llmm_runtime_t *runtime)
     return (uint32_t)runtime->state.position + runtime->state.has_pending;
 }
 
+#if LLMM_HOST_UART
+static int llmm_try_load_sd(llmm_runtime_t *runtime)
+{
+    if (runtime->psram_payload == NULL || runtime->model.psram_bytes == 0) {
+        return -1;
+    }
+
+    gpio_config_t power_cfg = {
+        .pin_bit_mask = 1ULL << LLMM_SD_PWR_GPIO,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    if (gpio_config(&power_cfg) != ESP_OK) {
+        return -2;
+    }
+    // Waveshare ESP32-P4-ETH: GPIO45 low enables TF card power switch.
+    gpio_set_level(LLMM_SD_PWR_GPIO, 0);
+
+    sd_pwr_ctrl_ldo_config_t ldo_config = {
+        .ldo_chan_id = LLMM_SD_LDO_CHANNEL_ID,
+    };
+    sd_pwr_ctrl_handle_t pwr_ctrl_handle = NULL;
+    if (sd_pwr_ctrl_new_on_chip_ldo(&ldo_config, &pwr_ctrl_handle) != ESP_OK) {
+        return -3;
+    }
+
+    esp_vfs_fat_sdmmc_mount_config_t mount_config = {
+        .format_if_mount_failed = false,
+        .max_files = 4,
+        .allocation_unit_size = 16 * 1024,
+    };
+    sdmmc_host_t host = SDMMC_HOST_DEFAULT();
+    host.slot = SDMMC_HOST_SLOT_0;
+    host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;
+    host.pwr_ctrl_handle = pwr_ctrl_handle;
+
+    sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
+    slot_config.width = 4;
+    slot_config.clk = GPIO_NUM_43;
+    slot_config.cmd = GPIO_NUM_44;
+    slot_config.d0 = GPIO_NUM_39;
+    slot_config.d1 = GPIO_NUM_40;
+    slot_config.d2 = GPIO_NUM_41;
+    slot_config.d3 = GPIO_NUM_42;
+    slot_config.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
+
+    sdmmc_card_t *card = NULL;
+    esp_err_t err = esp_vfs_fat_sdmmc_mount(LLMM_SD_MOUNT_POINT, &host, &slot_config, &mount_config, &card);
+    if (err != ESP_OK) {
+        return -4;
+    }
+
+    FILE *file = fopen(LLMM_SD_PAYLOAD_PATH, "rb");
+    if (file == NULL) {
+        esp_vfs_fat_sdcard_unmount(LLMM_SD_MOUNT_POINT, card);
+        return -5;
+    }
+
+    uint8_t header[16];
+    if (fread(header, 1, sizeof(header), file) != sizeof(header)) {
+        fclose(file);
+        esp_vfs_fat_sdcard_unmount(LLMM_SD_MOUNT_POINT, card);
+        return -6;
+    }
+    if (memcmp(header, "P4SD", 4) != 0) {
+        fclose(file);
+        esp_vfs_fat_sdcard_unmount(LLMM_SD_MOUNT_POINT, card);
+        return -7;
+    }
+
+    uint32_t version = 0;
+    uint32_t payload_bytes = 0;
+    uint32_t expected_crc = 0;
+    memcpy(&version, header + 4, sizeof(version));
+    memcpy(&payload_bytes, header + 8, sizeof(payload_bytes));
+    memcpy(&expected_crc, header + 12, sizeof(expected_crc));
+    if (version != 1U || payload_bytes != (uint32_t)runtime->model.psram_bytes) {
+        fclose(file);
+        esp_vfs_fat_sdcard_unmount(LLMM_SD_MOUNT_POINT, card);
+        return -8;
+    }
+
+    size_t got = fread(runtime->psram_payload, 1, payload_bytes, file);
+    fclose(file);
+    if (got != payload_bytes) {
+        esp_vfs_fat_sdcard_unmount(LLMM_SD_MOUNT_POINT, card);
+        return -9;
+    }
+
+    uint32_t actual_crc = esp_rom_crc32_le(0, runtime->psram_payload, payload_bytes);
+    esp_vfs_fat_sdcard_unmount(LLMM_SD_MOUNT_POINT, card);
+    if (actual_crc != expected_crc) {
+        return -10;
+    }
+
+    runtime->loaded = 1U;
+    runtime->payload_id = actual_crc;
+    llmm_session_clear(runtime);
+    ESP_LOGI("llmm-sd", "loaded %s bytes=%" PRIu32 " crc=0x%08" PRIx32,
+             LLMM_SD_PAYLOAD_PATH, payload_bytes, actual_crc);
+    return 0;
+}
+#endif
+
 static int llmm_runtime_init(llmm_runtime_t *runtime)
 {
     memset(runtime, 0, sizeof(*runtime));
@@ -970,9 +1085,14 @@ static int llmm_runtime_init(llmm_runtime_t *runtime)
         (uint16_t *)(runtime->kv_storage + 2U * LLMM_LAYERS * LLMM_KV_LAYER_VECTOR_BYTES);
     runtime->state.value_scales = runtime->state.key_scales + LLMM_LAYERS * LLMM_KV_CONTEXT * 2U;
     llmm_session_clear(runtime);
-    ESP_LOGI("llmm", "resident runtime ready: psram-payload=%u kv=%u psram-free=%u",
+#if LLMM_HOST_UART
+    // Optional fast path: load PSRAM weights from microSD (pfor-psram.bin).
+    (void)llmm_try_load_sd(runtime);
+#endif
+    ESP_LOGI("llmm", "resident runtime ready: psram-payload=%u kv=%u psram-free=%u loaded=%u",
              (unsigned)runtime->model.psram_bytes, (unsigned)LLMM_KV_STORAGE_BYTES,
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+             (unsigned)runtime->loaded);
     return 0;
 }
 

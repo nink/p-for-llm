@@ -1,6 +1,13 @@
 set(LLMM_HOST_UART 1)
 if(LLMM_HOST_UART)
-    set(LLMM_REQUIRES esp_driver_uart esp_partition esp_timer)
+    set(LLMM_REQUIRES
+        esp_driver_uart
+        esp_driver_gpio
+        esp_driver_sdmmc
+        fatfs
+        sdmmc
+        esp_partition
+        esp_timer)
 else()
     set(LLMM_REQUIRES esp_driver_usb_serial_jtag esp_partition esp_timer)
 endif()
