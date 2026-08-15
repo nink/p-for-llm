@@ -1,0 +1,11 @@
+{
+  "name": "p4-dual",
+  "n_layers": 12,
+  "d_model": 192,
+  "ffn_hidden": 512,
+  "n_experts": 58,
+  "experts_per_board": 29,
+  "boards": ["sun", "mercury"],
+  "interconnect": "ethernet",
+  "notes": "Same PLE-MoE as single-chip PFor, double expert count. Coordinator (Sun) keeps attention, KV, embeddings, routers, PLE. Each board stores 29 experts/layer. Top-1 RPC of 192-byte activations per layer over TCP 8742."
+}

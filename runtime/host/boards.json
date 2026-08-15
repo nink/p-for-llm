@@ -1,0 +1,20 @@
+{
+  "sun": {
+    "name": "Sun",
+    "role": "coordinator",
+    "transport": "ethernet",
+    "uart_hint": "COM5",
+    "usb_serial": "5B90158129",
+    "eth_ip": "192.168.72.42",
+    "mac": "e8:f6:0a:e0:ce:a0"
+  },
+  "mercury": {
+    "name": "Mercury",
+    "role": "expert-worker",
+    "transport": "uart",
+    "uart_hint": "COM6",
+    "usb_serial": "5B90158820",
+    "eth_ip": null,
+    "mac": "e8:f6:0a:e0:cb:9c"
+  }
+}

@@ -29,6 +29,7 @@
 #include "freertos/task.h"
 
 #include "llmm_compress.h"
+#include "llmm_eth.h"
 
 #ifndef LLMM_HOST_UART
 #define LLMM_HOST_UART 0
@@ -519,7 +520,15 @@ static inline int llmm_usb_read_once(void *buffer, uint32_t bytes, TickType_t wa
     const uint32_t started = profile != NULL ? llmm_p4_cycle_count() : 0U;
 #endif
 #if LLMM_HOST_UART
-    const int count = uart_read_bytes(LLMM_HOST_UART_PORT, buffer, bytes, wait);
+    int count;
+    if (llmm_eth_client_connected()) {
+        const int timeout_ms = wait == portMAX_DELAY ? -1 : (int)(wait * portTICK_PERIOD_MS);
+        count = llmm_eth_recv(buffer, bytes, timeout_ms);
+    } else {
+        TickType_t uart_wait = wait;
+        if (wait == portMAX_DELAY) uart_wait = pdMS_TO_TICKS(50);
+        count = uart_read_bytes(LLMM_HOST_UART_PORT, buffer, bytes, uart_wait);
+    }
 #else
     const int count = usb_serial_jtag_read_bytes(buffer, bytes, wait);
 #endif
@@ -541,7 +550,12 @@ static inline int llmm_usb_write_once(const void *buffer, size_t bytes, TickType
 #endif
 #if LLMM_HOST_UART
     (void)wait;
-    const int count = uart_write_bytes(LLMM_HOST_UART_PORT, buffer, bytes);
+    int count;
+    if (llmm_eth_client_connected()) {
+        count = llmm_eth_send(buffer, bytes);
+    } else {
+        count = uart_write_bytes(LLMM_HOST_UART_PORT, buffer, bytes);
+    }
 #else
     const int count = usb_serial_jtag_write_bytes(buffer, bytes, wait);
 #endif
@@ -560,7 +574,8 @@ static int llmm_usb_read_exact(void *buffer, size_t bytes)
     uint8_t *cursor = buffer;
     while (bytes != 0) {
         const int count = llmm_usb_read_once(cursor, (uint32_t)bytes, portMAX_DELAY);
-        if (count <= 0) return -1;
+        if (count < 0) return -1;
+        if (count == 0) continue;
         cursor += count;
         bytes -= (size_t)count;
     }
@@ -651,13 +666,18 @@ static uint32_t llmm_f32_checksum(const float *values, size_t count)
 static void llmm_usb_ready(int status, uint32_t psram_bytes, uint32_t loaded,
                            uint32_t payload_id, uint32_t session_tokens)
 {
-    uint8_t frame[28] = {'L','L','M','R','D','Y','0','5'};
+    uint8_t frame[32] = {'L','L','M','R','D','Y','0','5'};
     const int32_t wire_status = status;
+    uint8_t eth_octets[4] = {0, 0, 0, 0};
+#if LLMM_HOST_UART
+    llmm_eth_ipv4_octets(eth_octets);
+#endif
     memcpy(frame + 8, &wire_status, sizeof(wire_status));
     memcpy(frame + 12, &psram_bytes, sizeof(psram_bytes));
     memcpy(frame + 16, &loaded, sizeof(loaded));
     memcpy(frame + 20, &payload_id, sizeof(payload_id));
     memcpy(frame + 24, &session_tokens, sizeof(session_tokens));
+    memcpy(frame + 28, eth_octets, 4);
     (void)llmm_usb_write_exact(frame, sizeof(frame));
 }
 
@@ -1092,10 +1112,6 @@ static int llmm_runtime_init(llmm_runtime_t *runtime)
         (uint16_t *)(runtime->kv_storage + 2U * LLMM_LAYERS * LLMM_KV_LAYER_VECTOR_BYTES);
     runtime->state.value_scales = runtime->state.key_scales + LLMM_LAYERS * LLMM_KV_CONTEXT * 2U;
     llmm_session_clear(runtime);
-#if LLMM_HOST_UART
-    // Optional fast path: load PSRAM weights from microSD (pfor-psram.bin).
-    (void)llmm_try_load_sd(runtime);
-#endif
     ESP_LOGI("llmm", "resident runtime ready: psram-payload=%u kv=%u psram-free=%u loaded=%u",
              (unsigned)runtime->model.psram_bytes, (unsigned)LLMM_KV_STORAGE_BYTES,
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
@@ -1326,11 +1342,37 @@ static void llmm_handle_text(llmm_runtime_t *runtime
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 }
 
+#if LLMM_HOST_UART
+static void llmm_eth_start_task(void *arg)
+{
+    (void)arg;
+    if (llmm_eth_start() != 0) {
+        ESP_LOGE("llmm-eth", "ethernet start failed (UART host still available)");
+    }
+    vTaskDelete(NULL);
+}
+
+static void llmm_sd_load_task(void *arg)
+{
+    (void)llmm_try_load_sd(arg);
+    vTaskDelete(NULL);
+}
+#endif
+
 static void run_llmm_usb_inference(void)
 {
     llmm_runtime_t runtime;
     runtime.init_status = llmm_runtime_init(&runtime);
     if (runtime.init_status != 0) ESP_LOGE("llmm", "resident runtime init failed: %d", runtime.init_status);
+#if LLMM_HOST_UART
+    if (xTaskCreate(llmm_eth_start_task, "llmm-eth", 8192, NULL, 4, NULL) != pdPASS) {
+        ESP_LOGE("llmm-eth", "ethernet task create failed (UART host still available)");
+    }
+    if (runtime.init_status == 0 &&
+        xTaskCreate(llmm_sd_load_task, "llmm-sd", 8192, &runtime, 5, NULL) != pdPASS) {
+        ESP_LOGE("llmm-sd", "SD load task create failed");
+    }
+#endif
 
     for (;;) {
         uint8_t command[8];

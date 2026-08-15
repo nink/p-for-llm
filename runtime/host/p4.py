@@ -10,6 +10,7 @@ import struct
 import time
 import zlib
 import codecs
+import socket
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
@@ -21,6 +22,7 @@ except ImportError:  # pragma: no cover - this client currently targets POSIX US
 
 
 BAUD_RATE = 460_800
+ETH_TCP_PORT = 8742
 READ_CHUNK_BYTES = 16 * 1024
 TEXT_MAX_BYTES = 1_024  # native window / bypass threshold
 COMPRESS_FITTED_MAX_BYTES = 400  # on-device fitted packet cap (prefill-speed)
@@ -50,6 +52,7 @@ class DeviceInfo:
     loaded: bool
     payload_id: int
     session_tokens: int
+    eth_ip: int = 0
 
 
 @dataclass(frozen=True)
@@ -95,18 +98,21 @@ class SerialTransport:
                     "Windows host client requires pyserial (python -m pip install pyserial)"
                 ) from error
             try:
-                self._serial = serial.Serial(
-                    port=self.port,
-                    baudrate=BAUD_RATE,
-                    bytesize=serial.EIGHTBITS,
-                    parity=serial.PARITY_NONE,
-                    stopbits=serial.STOPBITS_ONE,
-                    timeout=0.2,
-                    write_timeout=60.0,
-                    dsrdtr=False,
-                    rtscts=False,
-                )
-                # Opening COM ports on Windows often asserts DTR/RTS and holds ESP in reset.
+                # Set DTR/RTS false *before* open. Serial(port=...) on Windows CH343
+                # often pulses them and dumps ESP32-P4 into reset/download.
+                self._serial = serial.Serial()
+                self._serial.port = self.port
+                self._serial.baudrate = BAUD_RATE
+                self._serial.bytesize = serial.EIGHTBITS
+                self._serial.parity = serial.PARITY_NONE
+                self._serial.stopbits = serial.STOPBITS_ONE
+                self._serial.timeout = 0.2
+                self._serial.write_timeout = 60.0
+                self._serial.dsrdtr = False
+                self._serial.rtscts = False
+                self._serial.dtr = False
+                self._serial.rts = False
+                self._serial.open()
                 self._serial.dtr = False
                 self._serial.rts = False
                 time.sleep(0.05)
@@ -115,7 +121,7 @@ class SerialTransport:
                     self._serial.rts = True
                     time.sleep(0.05)
                     self._serial.rts = False
-                    # ESP32-P4 app needs ~2–3s after reset before LLMHOST is ready.
+                    # ESP32-P4 app needs a few seconds after reset before LLMHOST is ready.
                     time.sleep(3.0)
                 self._serial.reset_input_buffer()
                 self._serial.reset_output_buffer()
@@ -237,10 +243,128 @@ class SerialTransport:
             self.fd = None
 
     def __enter__(self) -> "SerialTransport":
-        return self.open()
+        return self
 
     def __exit__(self, _exc_type, _exc_value, _traceback) -> None:
         self.close()
+
+
+class TcpTransport:
+    """Ethernet TCP transport for the same LLMHOST binary protocol."""
+
+    def __init__(self, host: str, port: int = ETH_TCP_PORT, timeout: float = 30.0) -> None:
+        self.host = host
+        self.tcp_port = port
+        self.port = f"{host}:{port}"
+        self.timeout = timeout
+        self._sock: socket.socket | None = None
+
+    def open(self) -> "TcpTransport":
+        sock = socket.create_connection((self.host, self.tcp_port), timeout=self.timeout)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        sock.settimeout(self.timeout)
+        self._sock = sock
+        return self
+
+    def read_exact(self, size: int, timeout: float | None = None) -> bytes:
+        if size < 0:
+            raise ValueError("read size cannot be negative")
+        if size == 0:
+            return b""
+        if self._sock is None:
+            raise RuntimeError("TCP socket is not open")
+        deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
+        result = bytearray()
+        while len(result) < size:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"timed out communicating with {self.port}")
+            self._sock.settimeout(remaining)
+            try:
+                chunk = self._sock.recv(size - len(result))
+            except TimeoutError as error:
+                raise TimeoutError(f"timed out communicating with {self.port}") from error
+            if not chunk:
+                raise ProtocolError(f"TCP connection {self.port!r} closed")
+            result.extend(chunk)
+        return bytes(result)
+
+    def write_all(self, data: bytes | bytearray | memoryview, timeout: float | None = None) -> None:
+        if self._sock is None:
+            raise RuntimeError("TCP socket is not open")
+        deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
+        view = memoryview(data)
+        while view:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"timed out communicating with {self.port}")
+            self._sock.settimeout(remaining)
+            sent = self._sock.send(view)
+            if sent <= 0:
+                raise ProtocolError(f"TCP connection {self.port!r} closed")
+            view = view[sent:]
+
+    def close(self) -> None:
+        if self._sock is not None:
+            try:
+                self._sock.close()
+            finally:
+                self._sock = None
+
+    def __enter__(self) -> "TcpTransport":
+        return self
+
+    def __exit__(self, _exc_type, _exc_value, _traceback) -> None:
+        self.close()
+
+
+def discover_eth_host(tcp_port: int = ETH_TCP_PORT, timeout: float = 0.12) -> str | None:
+    """Scan local IPv4 subnets for a PFor TCP host on ``tcp_port``."""
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    prefixes: set[str] = set()
+    local_ips: set[str] = set()
+    for probe in ("192.168.4.1",):
+        try:
+            with socket.create_connection((probe, tcp_port), timeout=timeout):
+                return probe
+        except OSError:
+            pass
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        probe.connect(("8.8.8.8", 80))
+        ip = probe.getsockname()[0]
+        probe.close()
+        if not ip.startswith("127."):
+            local_ips.add(ip)
+            prefixes.add(".".join(ip.split(".")[:3]))
+    except OSError:
+        pass
+    if not prefixes:
+        return None
+
+    hosts = [
+        f"{prefix}.{last}"
+        for prefix in prefixes
+        for last in range(1, 255)
+        if f"{prefix}.{last}" not in local_ips
+    ]
+
+    def probe(host: str) -> str | None:
+        try:
+            with socket.create_connection((host, tcp_port), timeout=timeout):
+                return host
+        except OSError:
+            return None
+
+    with ThreadPoolExecutor(max_workers=64) as pool:
+        futures = [pool.submit(probe, host) for host in hosts]
+        for future in as_completed(futures):
+            found = future.result()
+            if found:
+                return found
+    return None
 
 
 def _check_status(operation: str, status: int) -> None:
@@ -337,13 +461,25 @@ def _iter_file_region(layout: ArtifactLayout) -> Iterable[bytes]:
 class P4Device:
     """High-level protocol client for a flashed ESP32-P4 board."""
 
-    def __init__(self, transport: SerialTransport) -> None:
+    def __init__(self, transport: SerialTransport | TcpTransport) -> None:
         self.transport = transport
         self._last_info: DeviceInfo | None = None
         self._closed = False
 
     @classmethod
-    def connect(cls, port: str, timeout: float = 30.0, *, reset: bool = False) -> "P4Device":
+    def connect(
+        cls,
+        port: str | None = None,
+        timeout: float = 30.0,
+        *,
+        reset: bool = False,
+        host: str | None = None,
+        tcp_port: int = ETH_TCP_PORT,
+    ) -> "P4Device":
+        if host:
+            return cls(TcpTransport(host, tcp_port, timeout).open())
+        if not port:
+            raise ValueError("pass a UART --port (e.g. COM5) or Ethernet --host")
         return cls(SerialTransport(port, timeout).open(reset=reset))
 
     def _read_magic(self, expected: set[bytes]) -> bytes:
@@ -369,9 +505,13 @@ class P4Device:
 
     def handshake(self) -> DeviceInfo:
         self.transport.write_all(b"LLMHOST5")
-        frame = self._read_frame(b"LLMRDY05", 28)
-        _, status, psram_bytes, loaded, payload_id, session_tokens = struct.unpack("<8siIIII", frame)
-        info = DeviceInfo(status, psram_bytes, bool(loaded), payload_id, session_tokens)
+        frame = self._read_frame(b"LLMRDY05", 32)
+        _, status, psram_bytes, loaded, payload_id, session_tokens = struct.unpack(
+            "<8siIIII", frame[:28]
+        )
+        eth_octets = frame[28:32]
+        eth_ip = int.from_bytes(eth_octets, "big")
+        info = DeviceInfo(status, psram_bytes, bool(loaded), payload_id, session_tokens, eth_ip)
         self._last_info = info
         return info
 
@@ -518,7 +658,9 @@ class P4Device:
             return
         self._closed = True
         try:
-            port_open = self.transport.fd is not None or self.transport._serial is not None
+            port_open = getattr(self.transport, "fd", None) is not None or getattr(
+                self.transport, "_serial", None
+            ) is not None or getattr(self.transport, "_sock", None) is not None
             if port_open and self._last_info is not None:
                 self.bye()
         except (OSError, ProtocolError, TimeoutError):
@@ -540,8 +682,16 @@ def ensure_ready(device: P4Device, artifact: str | Path | None, *, reload: bool 
     print("handshake ...", flush=True)
     info = device.handshake()
     _check_status("handshake", info.status)
+    for _ in range(8):
+        if info.eth_ip:
+            break
+        time.sleep(2.0)
+        info = device.handshake()
+        _check_status("handshake", info.status)
+    ip_txt = socket.inet_ntoa(info.eth_ip.to_bytes(4, "big")) if info.eth_ip else "none"
     print(
-        f"board: loaded={info.loaded} payload_id=0x{info.payload_id:08x} psram={info.psram_bytes}",
+        f"board: loaded={info.loaded} payload_id=0x{info.payload_id:08x} "
+        f"psram={info.psram_bytes} eth_ip={ip_txt}",
         flush=True,
     )
     expected_payload_id = _file_crc32(layout) if layout is not None else None

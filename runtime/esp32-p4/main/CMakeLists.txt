@@ -7,14 +7,17 @@ if(LLMM_HOST_UART)
         fatfs
         sdmmc
         esp_partition
-        esp_timer)
+        esp_timer
+        esp_eth
+        esp_netif
+        esp_event)
 else()
     set(LLMM_REQUIRES esp_driver_usb_serial_jtag esp_partition esp_timer)
 endif()
 set(LLMM_DEBUG_C 0)
 set(LLMM_DEBUG_ZIG false)
 
-idf_component_register(SRCS "main.c" "llmm_compress.c" INCLUDE_DIRS "."
+idf_component_register(SRCS "main.c" "llmm_compress.c" "llmm_eth.c" INCLUDE_DIRS "."
                        REQUIRES ${LLMM_REQUIRES})
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
     LLMM_DEBUG=${LLMM_DEBUG_C}

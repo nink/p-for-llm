@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 try:
+    from .boards import board_connection, get_board
     from .p4 import (
         CONTEXT_LENGTH,
         RAW_TEXT_MAX_BYTES,
@@ -15,10 +16,12 @@ try:
         TEXT_MAX_BYTES,
         P4Device,
         ProtocolError,
+        discover_eth_host,
         ensure_ready,
         format_chat_prompt,
     )
 except ImportError:
+    from boards import board_connection, get_board
     from p4 import (
         CONTEXT_LENGTH,
         RAW_TEXT_MAX_BYTES,
@@ -26,6 +29,7 @@ except ImportError:
         TEXT_MAX_BYTES,
         P4Device,
         ProtocolError,
+        discover_eth_host,
         ensure_ready,
         format_chat_prompt,
     )
@@ -33,7 +37,11 @@ except ImportError:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--port", required=True, help="CH343 UART port (same COM as flash.py, e.g. COM5)")
+    parser.add_argument("--port", help="CH343 UART port (same COM as flash.py, e.g. COM5)")
+    parser.add_argument("--board", help="named board: sun, mercury, ... (see boards.json)")
+    parser.add_argument("--host", help="Ethernet IP of the P4 (TCP 8742). Omit with --find-eth to scan.")
+    parser.add_argument("--tcp-port", type=int, default=8742)
+    parser.add_argument("--find-eth", action="store_true", help="scan LAN for a PFor TCP listener")
     parser.add_argument("--artifact", type=Path, help="release model artifact used when the board is not loaded")
     parser.add_argument("--max-new-tokens", type=int, default=128)
     parser.add_argument("--temperature", type=float, default=0.7)
@@ -73,8 +81,34 @@ def run(args: argparse.Namespace) -> None:
         source_text = args.context_file.read_text(encoding="utf-8")
     if args.compress and not source_text:
         raise ValueError("--compress requires --context-file")
+    host = args.host
+    port = args.port
+    board_label = None
+    if args.board:
+        board = get_board(args.board)
+        board_label = board.name
+        if not host and not port:
+            port, host = board_connection(board)
+        print(f"board {board.name} ({board.role}, {board.transport})", flush=True)
+    if args.find_eth or (not port and not host):
+        print("scanning LAN for PFor Ethernet (TCP 8742) ...", flush=True)
+        host = discover_eth_host(args.tcp_port)
+        if not host:
+            raise RuntimeError(
+                "no PFor TCP listener found. Flash the Ethernet firmware, plug the cable, "
+                "then retry --find-eth (or pass --host <ip> / --port COM5 / --board mercury)."
+            )
+        print(f"found {host}:{args.tcp_port}", flush=True)
+    if not host and not port:
+        raise ValueError("pass --port COM5, --board mercury, or --host <ip> (or --find-eth)")
 
-    with P4Device.connect(args.port, timeout=args.timeout, reset=args.reset) as device:
+    with P4Device.connect(
+        port,
+        timeout=args.timeout,
+        reset=args.reset,
+        host=host,
+        tcp_port=args.tcp_port,
+    ) as device:
         layout = ensure_ready(device, args.artifact)
         device.clear()
         if layout is None:

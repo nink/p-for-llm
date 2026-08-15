@@ -561,6 +561,8 @@ def _validate_arguments(args: argparse.Namespace) -> None:
     for name, value in positive_values.items():
         if value <= 0:
             raise ValueError(f"{name} must be positive")
+    if args.max_steps is not None and args.max_steps <= 0:
+        raise ValueError("max_steps must be positive")
     if args.batch_size != 32:
         raise ValueError("batch_size must be 32")
     if args.learning_rate <= 0.0:
@@ -1147,6 +1149,11 @@ def train(args: argparse.Namespace) -> list[float]:
         optimizer_steps = (
             micro_batches_per_epoch - start_batch
         ) // args.gradient_accumulation_steps
+        if args.max_steps is not None:
+            remaining = args.max_steps - state.step
+            if remaining <= 0:
+                break
+            optimizer_steps = min(optimizer_steps, remaining)
         batch_source: PackedBatchIterator = (
             batches
             if repeated_batch is None
@@ -1401,6 +1408,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--tokenizer", type=Path, default=DEFAULT_TOKENIZER_PATH)
     parser.add_argument("--epochs", type=int, default=1)
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=None,
+        help="stop after this many optimizer steps (smoke / short runs)",
+    )
     parser.add_argument("--batch-size", type=int, choices=(32,), default=32)
     parser.add_argument("--seq-len", type=int, default=1024)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=1)
