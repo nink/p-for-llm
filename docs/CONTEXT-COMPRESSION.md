@@ -135,16 +135,17 @@ PKT  ████                              ~1000 tokens  →  PFor (1024 win
 - `compress.py` remains for **offline** ratio checks only.
 - Verified: ~8k-token source → **~100** fitted prompt tokens; long TTFT ~**7.6 s** on COM5 (decode ~8 tok/s).
 
-### Windows ports (important)
+### Host transport (this fork)
 
-This board has one usable USB-UART. Stock upstream firmware talks host protocol on Espressif USB-Serial-JTAG (often COM3); this fork moves host protocol onto **UART0 / CH343**, the same port used to flash.
+Prefer **Ethernet TCP 8742** (`chat.py --board sun`). Type-C is **CH343 UART** for flash and UART fallback — not Espressif USB-Serial-JTAG.
 
-| Port | Chip | Role |
-| --- | --- | --- |
-| USB-Enhanced-SERIAL CH343 (**COM5**) | USB-UART bridge | **Flash + `chat.py` / `smoke_test.py`** |
-| USB Serial Device (Espressif, often COM3) | USB-Serial-JTAG | Unused on this single-USB board |
+| Path | Role |
+| --- | --- |
+| Sun Ethernet `192.168.72.42:8742` | Preferred chat |
+| CH343 COM5 / COM6 | Flash + UART fallback |
+| USB-Serial-JTAG (Espressif COM) | Unused on this board |
 
-If chat times out with no `LLMRDY05`, rebuild/flash the UART-host firmware (`LLMM_HOST_UART=1`) and use COM5 — do not switch to COM3.
+If UART chat times out with no `LLMRDY05`, use this fork’s firmware (`LLMM_HOST_UART=1`) on the CH343 port — not a JTAG COM.
 
 ### Phase 1 commands
 
@@ -155,7 +156,7 @@ python runtime/host/compress.py \
   --question "Why do plant cells need chloroplasts?"
 
 # On-device compress (PC sends raw long prompt)
-python runtime/host/chat.py --port COM5 \
+python runtime/host/chat.py --board sun \
   --artifact pfor-180m.llmcraft \
   --compress \
   --context-file runtime/host/testdata/sample_long_context.md
