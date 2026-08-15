@@ -2,3 +2,8 @@ pfor-180m.llmcraft
 pfor-esp32p4.zip
 pfor-psram.bin
 SHA256SUMS
+runtime/esp32-p4/build/
+runtime/esp32-p4/sdkconfig
+runtime/host/__pycache__/
+*.pyc
+

@@ -14,7 +14,7 @@ endif()
 set(LLMM_DEBUG_C 0)
 set(LLMM_DEBUG_ZIG false)
 
-idf_component_register(SRCS "main.c" INCLUDE_DIRS "."
+idf_component_register(SRCS "main.c" "llmm_compress.c" INCLUDE_DIRS "."
                        REQUIRES ${LLMM_REQUIRES})
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
     LLMM_DEBUG=${LLMM_DEBUG_C}

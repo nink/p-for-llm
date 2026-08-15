@@ -28,6 +28,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "llmm_compress.h"
+
 #ifndef LLMM_HOST_UART
 #define LLMM_HOST_UART 0
 #endif
@@ -429,6 +431,8 @@ static TaskHandle_t llmm_accel_worker_task;
 #define LLMM_KV_CONTEXT 1024U
 #define LLMM_LAYERS 12U
 #define LLMM_TEXT_MAX_BYTES 1024U
+/* Long raw prompts arrive over the wire; on-device compress fits TEXT_MAX. */
+#define LLMM_RAW_PROMPT_MAX_BYTES LLMM_RAW_MAX_BYTES
 #define LLMM_TOP_K_MAX 64U
 #define LLMM_WIDTH 192U
 #define LLMM_VOCAB 32768U
@@ -499,6 +503,7 @@ typedef struct {
     llmm_inference_state_t state;
     uint8_t *psram_payload;
     uint8_t *kv_storage;
+    uint8_t *raw_prompt;
     esp_partition_mmap_handle_t manifest_map_handle;
     esp_partition_mmap_handle_t ple_map_handle;
     esp_partition_mmap_handle_t tokenizer_map_handle;
@@ -1031,7 +1036,7 @@ static int llmm_runtime_init(llmm_runtime_t *runtime)
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
         .source_clk = UART_SCLK_DEFAULT,
     };
-    ESP_ERROR_CHECK(uart_driver_install(LLMM_HOST_UART_PORT, 4096, 4096, 0, NULL, 0));
+    ESP_ERROR_CHECK(uart_driver_install(LLMM_HOST_UART_PORT, 16384, 4096, 0, NULL, 0));
     ESP_ERROR_CHECK(uart_param_config(LLMM_HOST_UART_PORT, &uart_config));
     ESP_ERROR_CHECK(uart_set_pin(LLMM_HOST_UART_PORT, LLMM_HOST_UART_TX_GPIO, LLMM_HOST_UART_RX_GPIO,
                                  UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
@@ -1074,6 +1079,8 @@ static int llmm_runtime_init(llmm_runtime_t *runtime)
     if (runtime->kv_storage == NULL) return -202;
     runtime->workspace = heap_caps_malloc(sizeof(*runtime->workspace), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (runtime->workspace == NULL) return -203;
+    runtime->raw_prompt = heap_caps_malloc(LLMM_RAW_PROMPT_MAX_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (runtime->raw_prompt == NULL) return -203;
     if (llmm_accel_init() != 0) return -204;
 
     runtime->storage.psram_payload = runtime->psram_payload;
@@ -1209,23 +1216,44 @@ static void llmm_handle_text(llmm_runtime_t *runtime
     memcpy(&random_state, request + 16, sizeof(random_state));
 
     int status = runtime->loaded != 0U ? 0 : -221;
-    if (status == 0 && (prompt_bytes == 0 || prompt_bytes > sizeof(runtime->workspace->text) ||
+    if (status == 0 && (prompt_bytes == 0 || prompt_bytes > LLMM_RAW_PROMPT_MAX_BYTES ||
+                        runtime->raw_prompt == NULL ||
                         requested_tokens == 0 || top_k == 0 || top_k > LLMM_TOP_K_MAX ||
                         !isfinite(temperature) || temperature < 0.0f)) status = -240;
     if (status != 0) {
         llmm_usb_text_done(status, 0, 0, 0);
         return;
     }
-    if (llmm_usb_read_exact(runtime->workspace->text, prompt_bytes) != 0) {
+    if (llmm_usb_read_exact(runtime->raw_prompt, prompt_bytes) != 0) {
         llmm_usb_text_done(-241, 0, 0, 0);
         return;
+    }
+
+    size_t fitted_bytes = 0;
+    llmm_compress_stats_t compress_stats;
+    const int compress_status = llmm_compress_prompt_to_fit(
+        runtime->raw_prompt, prompt_bytes, runtime->workspace->text, sizeof(runtime->workspace->text),
+        &fitted_bytes, &compress_stats);
+    if (compress_status != 0 || fitted_bytes == 0 || fitted_bytes > sizeof(runtime->workspace->text)) {
+        llmm_usb_text_done(-242, 0, 0, 0);
+        return;
+    }
+    if (compress_stats.compressed != 0U) {
+        ESP_LOGI("llmm-compress",
+                 "on-device ratio~%.2f:1 raw=%" PRIu32 " fitted=%" PRIu32 " kept=%" PRIu32
+                 " dropped=%" PRIu32,
+                 compress_stats.packet_bytes > 0
+                     ? (double)compress_stats.source_bytes / (double)compress_stats.packet_bytes
+                     : 0.0,
+                 compress_stats.source_bytes, compress_stats.packet_bytes, compress_stats.kept_sentences,
+                 compress_stats.dropped_sentences);
     }
 
     uint32_t prefix_count = runtime->state.has_pending;
     if (prefix_count != 0U) runtime->workspace->tokens[0] = runtime->state.pending_token;
     size_t prompt_count = 0;
     const int tokenizer_status = llmm_tokenizer_encode(
-        &runtime->tokenizer, runtime->workspace->text, prompt_bytes,
+        &runtime->tokenizer, runtime->workspace->text, fitted_bytes,
         runtime->workspace->tokens + prefix_count, LLMM_KV_CONTEXT - prefix_count, &prompt_count,
         runtime->workspace->bpe_pieces,
         sizeof(runtime->workspace->bpe_pieces) / sizeof(*runtime->workspace->bpe_pieces));

@@ -183,7 +183,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--firmware", type=Path, required=True, help="pfor-esp32p4.zip")
     parser.add_argument("--model", type=Path, required=True, help="pfor-180m.llmcraft")
-    parser.add_argument("--port", required=True, help="USB serial port exposed by the board")
+    parser.add_argument("--port", required=True, help="CH343 UART port (same COM as chat.py, e.g. COM5)")
     parser.add_argument("--baud", type=int, default=BAUD_RATE)
     return parser.parse_args()
 

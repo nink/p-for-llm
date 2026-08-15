@@ -8,11 +8,27 @@ import sys
 from pathlib import Path
 
 try:
-    from .compress import DEFAULT_PACKET_BYTES, DEFAULT_TARGET_RATIO, compress_context
-    from .p4 import CONTEXT_LENGTH, P4Device, ProtocolError, TEXT_MAX_BYTES, ensure_ready, format_chat_prompt
+    from .p4 import (
+        CONTEXT_LENGTH,
+        RAW_TEXT_MAX_BYTES,
+        COMPRESS_FITTED_MAX_BYTES,
+        TEXT_MAX_BYTES,
+        P4Device,
+        ProtocolError,
+        ensure_ready,
+        format_chat_prompt,
+    )
 except ImportError:
-    from compress import DEFAULT_PACKET_BYTES, DEFAULT_TARGET_RATIO, compress_context
-    from p4 import CONTEXT_LENGTH, P4Device, ProtocolError, TEXT_MAX_BYTES, ensure_ready, format_chat_prompt
+    from p4 import (
+        CONTEXT_LENGTH,
+        RAW_TEXT_MAX_BYTES,
+        COMPRESS_FITTED_MAX_BYTES,
+        TEXT_MAX_BYTES,
+        P4Device,
+        ProtocolError,
+        ensure_ready,
+        format_chat_prompt,
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -32,15 +48,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--compress",
         action="store_true",
-        help="enable Phase 1 host context compression for --context-file turns",
+        help="send raw long CONTEXT+question; board compresses on-device before inference",
     )
     parser.add_argument(
         "--context-file",
         type=Path,
-        help="long source document; with --compress, trimmed to ~8:1 before each question",
+        help="long source document; with --compress, sent raw (board trims to ~8:1)",
     )
-    parser.add_argument("--max-packet-bytes", type=int, default=DEFAULT_PACKET_BYTES)
-    parser.add_argument("--target-ratio", type=float, default=DEFAULT_TARGET_RATIO)
     return parser.parse_args()
 
 
@@ -50,7 +64,7 @@ def print_help(compress_enabled: bool) -> None:
     print("/reload  reload the model payload from --artifact")
     print("/exit    leave the chat")
     if compress_enabled:
-        print("/stats   show last compression stats")
+        print("/stats   show last raw-prompt size sent to the board")
 
 
 def run(args: argparse.Namespace) -> None:
@@ -61,17 +75,16 @@ def run(args: argparse.Namespace) -> None:
         raise ValueError("--compress requires --context-file")
 
     with P4Device.connect(args.port, timeout=args.timeout, reset=args.reset) as device:
-        print("handshake / load model (PSRAM transfer can take several minutes) ...", flush=True)
         layout = ensure_ready(device, args.artifact)
         device.clear()
         if layout is None:
-            print("ready: using the model already loaded on the board")
+            print("ready: using board payload")
         else:
-            print(f"ready: loaded {layout.path}")
+            print(f"ready: artifact {layout.path.name}")
         if args.compress:
             print(
-                f"compress: on  target≈{args.target_ratio}:1  "
-                f"max_packet_bytes={args.max_packet_bytes}  "
+                f"compress: on-device  wire_max={RAW_TEXT_MAX_BYTES}B  "
+                f"fitted_max={COMPRESS_FITTED_MAX_BYTES}B  bypass<{TEXT_MAX_BYTES}B  "
                 f"source_chars={len(source_text)}",
                 flush=True,
             )
@@ -79,7 +92,7 @@ def run(args: argparse.Namespace) -> None:
 
         continuing = False
         session_tokens = 0
-        last_stats = None
+        last_raw_bytes = 0
         while True:
             try:
                 line = input("you> ")
@@ -110,16 +123,12 @@ def run(args: argparse.Namespace) -> None:
                     session_tokens = 0
                     print("model reloaded and session cleared")
                 elif command == "/stats":
-                    if last_stats is None:
+                    if last_raw_bytes <= 0:
                         print("no compression stats yet")
                     else:
                         print(
-                            f"ratio~{last_stats.ratio_tokens:.2f}:1 "
-                            f"src~{last_stats.source_tokens_est} "
-                            f"pkt~{last_stats.packet_tokens_est} "
-                            f"bytes={last_stats.packet_bytes} "
-                            f"kept={last_stats.kept_sentences} "
-                            f"dropped={last_stats.dropped_sentences}"
+                            f"last raw prompt {last_raw_bytes}B "
+                            f"(board fits to <= {COMPRESS_FITTED_MAX_BYTES}B on-device)"
                         )
                 elif command in {"/exit", "/quit"}:
                     return
@@ -129,21 +138,12 @@ def run(args: argparse.Namespace) -> None:
 
             user_content = line
             if args.compress:
-                result = compress_context(
-                    source_text,
-                    line,
-                    max_packet_bytes=args.max_packet_bytes,
-                    target_ratio=args.target_ratio,
+                user_content = (
+                    f"CONTEXT:\n{source_text}\n\n"
+                    f"QUESTION: {line}\n"
+                    f"Answer using only CONTEXT."
                 )
-                last_stats = result
-                user_content = result.packet
-                print(
-                    f"[compress ratio~{result.ratio_tokens:.2f}:1 "
-                    f"{result.source_tokens_est}->{result.packet_tokens_est} tok_est "
-                    f"{result.packet_bytes}B]",
-                    flush=True,
-                )
-                # Compressed turns are self-contained; reset KV session.
+                # Self-contained long turns; reset KV session.
                 if continuing:
                     device.clear()
                     continuing = False
@@ -155,15 +155,28 @@ def run(args: argparse.Namespace) -> None:
                 prompt = format_chat_prompt([{"role": "user", "content": user_content}])
 
             prompt_bytes = len(prompt.encode("utf-8"))
-            if prompt_bytes > TEXT_MAX_BYTES:
+            if prompt_bytes > RAW_TEXT_MAX_BYTES:
                 print(
-                    f"error: prompt is {prompt_bytes} bytes; wire limit is {TEXT_MAX_BYTES}. "
-                    "Lower --max-packet-bytes.",
+                    f"error: prompt is {prompt_bytes} bytes; wire limit is {RAW_TEXT_MAX_BYTES}.",
                     flush=True,
                 )
                 continue
 
-            if session_tokens + prompt_bytes + args.max_new_tokens > CONTEXT_LENGTH:
+            if args.compress:
+                last_raw_bytes = prompt_bytes
+                print(
+                    f"[raw {prompt_bytes}B → board compress ≤{COMPRESS_FITTED_MAX_BYTES}B]",
+                    flush=True,
+                )
+            elif prompt_bytes > TEXT_MAX_BYTES:
+                print(
+                    f"error: prompt is {prompt_bytes} bytes; without --compress "
+                    f"limit is {TEXT_MAX_BYTES} (or enable --compress for on-device trim).",
+                    flush=True,
+                )
+                continue
+
+            if session_tokens + min(prompt_bytes, TEXT_MAX_BYTES) + args.max_new_tokens > CONTEXT_LENGTH:
                 device.clear()
                 continuing = False
                 session_tokens = 0

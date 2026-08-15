@@ -2,13 +2,80 @@
 
 [中文文档](README_ZH.md)
 
-Fork of [cyfrit/p-for-llm](https://github.com/cyfrit/p-for-llm) maintained at [nink/p-for-llm](https://github.com/nink/p-for-llm).
+Fork of [cyfrit/p-for-llm](https://github.com/cyfrit/p-for-llm) at [nink/p-for-llm](https://github.com/nink/p-for-llm).
 
-### Fork goal 1 — context compression
+Offline **180.9M** PLE-MoE on ESP32-P4. Native context is still **1,024 tokens**. This fork’s first goal is **on-device context compression** so a long paste (~8k tokens) can still run on that window.
 
-Upstream native context is **1,024 tokens**. This fork’s first goal is **~8:1 host-side context compression** so the board can condition on ~8k tokens of source material without enlarging on-chip KV.
+Details: **[docs/CONTEXT-COMPRESSION.md](docs/CONTEXT-COMPRESSION.md)** · **[docs/SD-PAYLOAD.md](docs/SD-PAYLOAD.md)**
 
-See **[docs/CONTEXT-COMPRESSION.md](docs/CONTEXT-COMPRESSION.md)**.
+## Hardware (this fork)
+
+Brought up on **[Waveshare ESP32-P4-ETH](https://www.waveshare.com/wiki/ESP32-P4-ETH)** — not the upstream WT9932P4-Tiny.
+
+| | |
+| --- | --- |
+| Board | Waveshare ESP32-P4-ETH |
+| SoC | ESP32-P4 **v1.3** (360 MHz in this firmware) |
+| Memory | **32 MB** PSRAM · **16 MB** Flash |
+| USB | Single Type-C → **CH343 UART** (host + flash). No Espressif USB-Serial-JTAG on that connector. |
+| Host UART | UART0 **460800** · GPIO37 TX / GPIO38 RX |
+| Storage | microSD (TF) for `pfor-psram.bin` · SDMMC 4-bit (CLK 43, CMD 44, D0–D3 39–42, GPIO45 power low, LDO ch. 4) |
+
+On Windows this CH343 shows up as **COM5** (`USB-Enhanced-SERIAL CH343`). Flash, chat, and model load all use that port.
+
+Upstream’s stock host protocol expects USB-Serial-JTAG (Espressif VID `303A`). That path is unused on this single-USB board.
+
+## Changes vs upstream (high level)
+
+1. **UART host protocol** (`LLMM_HOST_UART=1`) so chat works on the ETH board’s CH343 instead of USB-Serial-JTAG.
+2. **Windows host client** (`pyserial` in `runtime/host/p4.py`).
+3. **SD boot load** — copy `pfor-psram.bin` to a FAT32 card and skip the ~10 minute UART weight transfer. See [docs/SD-PAYLOAD.md](docs/SD-PAYLOAD.md).
+4. **`--reset` is opt-in** — default connect does not pulse RTS (that reboot would drop PSRAM).
+5. **On-device extractive compression** (`runtime/esp32-p4/main/llmm_compress.c`):
+   - Host sends the **raw** long prompt (up to **48 KiB**).
+   - Board trims to a **≤400 B** fitted packet (~80–100 tokens) for faster prefill.
+   - Raw prompts **≤1024 B** skip compression (passthrough).
+6. **Measured on this board** (decode ~**8 tok/s**): short TTFT ~**1.6 s**; ~8k-token source compressed on-device TTFT ~**7.6 s** (was ~20 s before the 400 B cap).
+
+Model quality is still upstream’s undertrained 180.9M — compression changes **what fits**, not how well it writes.
+
+## Quick start (Waveshare ETH / COM5)
+
+Clone this fork (not upstream) if you want the UART + SD + compress path:
+
+```bash
+git clone https://github.com/nink/p-for-llm.git
+cd p-for-llm
+```
+
+Download from the [upstream latest Release](https://github.com/cyfrit/p-for-llm/releases/latest) into the repo root:
+
+- [`pfor-esp32p4.zip`](https://github.com/cyfrit/p-for-llm/releases/latest/download/pfor-esp32p4.zip)
+- [`pfor-180m.llmcraft`](https://github.com/cyfrit/p-for-llm/releases/latest/download/pfor-180m.llmcraft)
+- [`SHA256SUMS`](https://github.com/cyfrit/p-for-llm/releases/latest/download/SHA256SUMS)
+
+```powershell
+python -m pip install esptool pyserial
+python runtime/host/flash.py --firmware pfor-esp32p4.zip --model pfor-180m.llmcraft --port COM5
+```
+
+That flashes **upstream** images. For UART host + SD + on-device compress, **rebuild and flash this fork’s firmware** (ESP-IDF v6 + Zig), then:
+
+```powershell
+# Optional: fast PSRAM load from microSD
+python runtime/host/prepare_sd_payload.py --artifact pfor-180m.llmcraft --out pfor-psram.bin
+# copy pfor-psram.bin to the FAT32 card root, insert, then:
+
+python runtime/host/chat.py --port COM5 --artifact pfor-180m.llmcraft
+
+# Long context: PC sends raw text; P4 compresses
+python runtime/host/chat.py --port COM5 --artifact pfor-180m.llmcraft `
+  --compress --context-file runtime/host/testdata/sample_long_context.md
+```
+
+Do **not** pass `--reset` on every chat unless you intend to reboot (clears PSRAM; SD will reload if present).
+
+Commands: `/help`, `/clear`, `/reload`, `/exit`.
 
 ## PLE-MoE-W1.58A8
 
@@ -16,13 +83,11 @@ See **[docs/CONTEXT-COMPRESSION.md](docs/CONTEXT-COMPRESSION.md)**.
 
 ![PFor architecture](docs/architecture.png)
 
-![WT9932P4-Tiny development board](docs/wt9932p4-tiny.jpg)
+![WT9932P4-Tiny development board (upstream)](docs/wt9932p4-tiny.jpg)
 
-PFor is an LLM running on ESP32-P4, although technically it should be called an SLM. It has Instruct(ChatML) and Agent capabilities, despite both being extremely early and highly unstable. Its inference speed on ESP32-P4 is about 9 tokens/s.
+PFor is an LLM running on ESP32-P4 (technically an SLM). It has Instruct (ChatML) and Agent capabilities, both early and unstable. Decode on this P4 is about **8–9 tokens/s**.
 
-I use the WT9932P4-Tiny development board (I bought mine on Taobao for CNY 39.9, about USD 6; it is around USD 10 on AliExpress), which has 32 MB PSRAM and 16 MB Flash.
-
-The USB connection admittedly makes "offline" look somewhat questionable. The board's Flash cannot hold the weights loaded into PSRAM, so they are transferred over USB at startup; the host performs no inference. Give it an SD card for the weights, and it can run entirely without a host.
+The USB cable does not mean the PC is doing inference. Flash cannot hold the PSRAM weights; without an SD payload they are transferred over UART at startup. With `pfor-psram.bin` on microSD, the board can load weights without that long transfer.
 
 ## Model
 
@@ -36,16 +101,14 @@ The USB connection admittedly makes "offline" look somewhat questionable. The bo
 | MoE | 29 experts per layer, Top-1 routing |
 | Expert FFN | 512 |
 | PLE dimension | 176 |
-| Context | 1,024 |
+| Context | 1,024 native (this fork: ~8k **effective** via compress) |
 | Quantization | W1.58A8 |
 
 With mixed ternary, Q8, and FP16 storage, the 180.9M-parameter model occupies about 44 MiB across Flash and PSRAM.
 
-PFor uses a MoE + PLE architecture to make full use of the hardware. MoE weights are stored in PSRAM, PLE weights are stored in Flash and accessed with XIP, and the cache and working memory are stored in DIRAM. The runtime mainly uses Espressif XespV acceleration. During development, XespV tests showed speedups of up to 30x.
+PFor uses a MoE + PLE architecture. MoE weights sit in PSRAM, PLE in Flash (XIP), KV and workspace in on-chip RAM. The runtime uses Espressif XespV.
 
-The WT9932P4-Tiny uses ESP32-P4 v1.3. Early P4 revisions can only run at 360 MHz. If you have a newer v3 chip, it can run at 400 MHz and may provide higher generation speed.
-
-Compared with ESP32-S3 (thanks to @slvDev for the work), P4 provides much stronger performance, including new hardware accelerators and support for up to 32 MB PSRAM.
+This ETH board’s P4 is **v1.3** (360 MHz). Newer v3 silicon can run at 400 MHz.
 
 The vocabulary is pruned from Qwen3.5. Thanks to Qwen.
 
@@ -61,30 +124,7 @@ assistant
 The capital of France is Paris.
 ```
 
-````text
-user
-Write a Python program.
-
-assistant
-Here's an example of a Python program that accomplishes this task:
-
-```python
-def print_and_print():
-    for i, item in enumerate(items):
-        print(i)
-    print()
-```
-
-This program will create a new list called `items` of items called `item_list` with items from `items` that are not already in the `items`. The `print()` function is used to display the item's `item` in the `items` list.
-````
-
-```text
-user
-What is the United States?
-
-assistant
-The United States is the third largest country in the world, with around 1.8% of the country's population.
-```
+Output is often weak or off-topic — that is the undertrained 180.9M, not the UART/compress path.
 
 ### Agent
 
@@ -101,54 +141,7 @@ Tool: OK replaced config/cache.ini:4
 Agent: Finish Updated cache_mode to eager.
 ```
 
-Although its output is often little more than nonsense and frequently goes off the rails, it still demonstrates some ability to follow instructions and stay roughly on topic. Its Agent capability is not general-purpose: it was trained with a fixed tool prompt. Even so, it shows some ability to understand tasks and drive tools, albeit very unstably.
-
-## Installation
-
-Clone the repository:
-
-```bash
-git clone https://github.com/cyfrit/p-for-llm.git
-cd p-for-llm
-```
-
-Download these files from the [latest Release](https://github.com/cyfrit/p-for-llm/releases/latest) and place them in the repository root:
-
-- [`pfor-esp32p4.zip`](https://github.com/cyfrit/p-for-llm/releases/latest/download/pfor-esp32p4.zip)
-- [`pfor-180m.llmcraft`](https://github.com/cyfrit/p-for-llm/releases/latest/download/pfor-180m.llmcraft)
-- [`SHA256SUMS`](https://github.com/cyfrit/p-for-llm/releases/latest/download/SHA256SUMS)
-
-Verify the downloads and install `esptool`:
-
-```bash
-sha256sum --check SHA256SUMS
-python3 -m pip install esptool
-```
-
-Flash the firmware and model:
-
-```bash
-python3 runtime/host/flash.py \
-  --firmware pfor-esp32p4.zip \
-  --model pfor-180m.llmcraft \
-  --port <PORT>
-```
-
-Start terminal chat:
-
-```bash
-python3 runtime/host/chat.py --port <PORT> --artifact pfor-180m.llmcraft
-```
-
-Commands: `/help`, `/clear`, `/reload`, `/exit`.
-
-Run the Agent demo:
-
-```bash
-python3 runtime/host/agent_demo.py --port <PORT> --artifact pfor-180m.llmcraft
-```
-
-The released firmware targets pre-v3 P4 hardware at 360 MHz. Newer P4 revisions may require rebuilding from source with a matching configuration.
+Agent mode is not general-purpose; it was trained with a fixed tool prompt.
 
 ## Training
 
@@ -175,6 +168,8 @@ Based on its current performance, more training should improve it considerably. 
 ## Future
 
 Because PFor uses MoE, experts could theoretically be distributed across multiple MCUs. With Top-1 routing, 8-bit activations, hidden size 192, and 12 layers, each generated token requires about 4,608 bytes of expert activation transfer. At 9 tokens/s, the theoretical bandwidth is about **40.5 KiB/s** in both directions combined, excluding protocol overhead.
+
+This fork’s near-term work is **better compression quality at the same fitted budget**, not a larger native KV.
 
 ## License
 

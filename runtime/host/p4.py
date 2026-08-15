@@ -22,7 +22,9 @@ except ImportError:  # pragma: no cover - this client currently targets POSIX US
 
 BAUD_RATE = 460_800
 READ_CHUNK_BYTES = 16 * 1024
-TEXT_MAX_BYTES = 1_024
+TEXT_MAX_BYTES = 1_024  # native window / bypass threshold
+COMPRESS_FITTED_MAX_BYTES = 400  # on-device fitted packet cap (prefill-speed)
+RAW_TEXT_MAX_BYTES = 49_152  # wire limit for long raw prompts before on-device compress
 TOP_K_MAX = 64
 CONTEXT_LENGTH = 1_024
 
@@ -100,7 +102,7 @@ class SerialTransport:
                     parity=serial.PARITY_NONE,
                     stopbits=serial.STOPBITS_ONE,
                     timeout=0.2,
-                    write_timeout=5.0,
+                    write_timeout=60.0,
                     dsrdtr=False,
                     rtscts=False,
                 )
@@ -432,8 +434,8 @@ class P4Device:
         on_chunk: Callable[[str], None] | None = None,
     ) -> TextResult:
         prompt_bytes = prompt.encode("utf-8") if isinstance(prompt, str) else bytes(prompt)
-        if not 1 <= len(prompt_bytes) <= TEXT_MAX_BYTES:
-            raise ValueError(f"prompt must be between 1 and {TEXT_MAX_BYTES} bytes")
+        if not 1 <= len(prompt_bytes) <= RAW_TEXT_MAX_BYTES:
+            raise ValueError(f"prompt must be between 1 and {RAW_TEXT_MAX_BYTES} bytes")
         if not 1 <= requested_tokens <= CONTEXT_LENGTH:
             raise ValueError("requested token count is outside the runtime context")
         if not 1 <= top_k <= TOP_K_MAX:
@@ -535,15 +537,27 @@ def ensure_ready(device: P4Device, artifact: str | Path | None, *, reload: bool 
     """Handshake and load the artifact when the board does not have a payload."""
 
     layout = validate_artifact(artifact) if artifact is not None else None
+    print("handshake ...", flush=True)
     info = device.handshake()
     _check_status("handshake", info.status)
+    print(
+        f"board: loaded={info.loaded} payload_id=0x{info.payload_id:08x} psram={info.psram_bytes}",
+        flush=True,
+    )
     expected_payload_id = _file_crc32(layout) if layout is not None else None
     if reload or not info.loaded or (
         expected_payload_id is not None and info.payload_id != expected_payload_id
     ):
         if layout is None:
             raise RuntimeError("the board has no loaded model; pass --artifact")
+        print(
+            "loading model over UART (slow, ~10 min) — prefer SD card pfor-psram.bin for fast boot",
+            flush=True,
+        )
         device.load_artifact(layout)
+        print("UART model load complete", flush=True)
+    else:
+        print("model already in PSRAM (SD or prior load) — skipping transfer", flush=True)
     return layout
 
 

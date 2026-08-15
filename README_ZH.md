@@ -1,6 +1,10 @@
-# PFor
+# PFor（nink fork）
 
 [English documentation](README.md)
+
+本仓库是 [cyfrit/p-for-llm](https://github.com/cyfrit/p-for-llm) 的 fork：[nink/p-for-llm](https://github.com/nink/p-for-llm)。
+
+**本 fork 验证硬件：** [Waveshare ESP32-P4-ETH](https://www.waveshare.com/wiki/ESP32-P4-ETH)（单 Type-C = CH343 UART，不是上游的 WT9932P4-Tiny / USB-Serial-JTAG）。变更摘要、SD 加载与板端上下文压缩见英文 [README.md](README.md) 与 [docs/CONTEXT-COMPRESSION.md](docs/CONTEXT-COMPRESSION.md)。
 
 ## PLE-MoE-W1.58A8
 

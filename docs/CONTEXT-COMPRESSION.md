@@ -11,12 +11,12 @@ Ship a **simple working path** first. Do not start with LLMLingua-class token cl
 | Phase | Goal | Done when |
 | --- | --- | --- |
 | **0 — Bring-up** | Stock PFor chat on ESP32-P4 via this fork | `chat.py` answers short prompts on hardware |
-| **1 — Achievable MVP** | Host-side **extractive / budget trim** to ~8:1 into the 1,024 window | Long paste + question works end-to-end; ratio logged |
+| **1 — Achievable MVP** | **On-device** extractive / budget trim to ~8:1 into the 1,024 window | Host sends raw long paste; board compresses; ratio logged |
 | **2 — Optimize** | Better retention (query-aware keep, schema pack, optional LLMLingua-style / small compressor) | Higher eval score at same ~8:1 (or stable quality at higher ratio) |
 
-**Phase 1 method (intentionally boring):** keep question + headings + sentences with numbers/names; drop filler until under budget. Good enough to prove effective long context.
+**Phase 1 method (intentionally boring):** keep question + headings + sentences with numbers/names; drop filler until under budget. Runs on the **ESP32-P4** (`llmm_compress.c`). Host `compress.py` remains for offline ratio checks only.
 
-**Phase 2+:** only after Phase 1 is measurable — smarter compression, rolling `MEM`, on-device compress, finetune on pack-state dialect.
+**Phase 2+:** only after Phase 1 is measurable — smarter compression, rolling `MEM`, finetune on pack-state dialect.
 
 ## Target
 
@@ -25,46 +25,42 @@ Ship a **simple working path** first. Do not start with LLMLingua-class token cl
 | Compression ratio | **~8:1** (source tokens → tokens sent to the model) |
 | Native window | Still **1,024** |
 | Effective input | ~**8,000** tokens of source material per turn (before reply budget) |
-| First implementation | **Host-side** (PC), wrapping the existing USB chat path |
-| Later (optional) | On-device distill pass; finetune model on compressed “pack state” dialect |
+| Wire | Host sends raw prompt up to **48 KiB**; board fits long prompts to **≤400 B** (prefill-speed cap) |
+| Bypass | Raw prompt **≤1024 B** is not compressed |
+| Implementation | On-device `llmm_compress.c` (host `compress.py` = offline only) |
 
-Example: an ~8k-token document or chat history is reduced to ~1k tokens of dense state, then passed to `P4Device.text()` as today.
+Example: an ~8k-token document or chat history is reduced on the P4 to ~1k tokens of dense state, then run through normal PFor inference.
 
 ## Architecture
 
-Effective long context = **compress outside the model**, then run normal PFor inference inside the native 1,024-token window.
+Effective long context = **compress on the board**, then run normal PFor inference inside the native 1,024-token window.
 
 ```mermaid
 flowchart TB
   subgraph sources ["Long source (~8k tokens)"]
     DOC["Document / paste"]
-    HIST["Chat history"]
     Q["User question"]
   end
 
-  subgraph host ["Host PC — nink fork v1"]
-    IN["Assemble source + question"]
-    CMP["compress.py<br/>~8:1 compression"]
-    PACK["Pack state (~1k tokens)<br/>facts · numbers · negations · MEM"]
-    CHAT["chat.py<br/>format_chat_prompt()"]
+  subgraph host ["Host PC"]
+    IN["Assemble CONTEXT + QUESTION"]
+    CHAT["chat.py --compress<br/>raw ChatML ≤48KiB"]
   end
 
-  subgraph device ["ESP32-P4 — unchanged native window"]
-    USB["USB session"]
+  subgraph device ["ESP32-P4"]
+    USB["UART session"]
+    CMP["llmm_compress.c<br/>~8:1 extractive"]
     PFOR["PFor inference<br/>max_seq_len = 1024"]
     OUT["Short answer"]
   end
 
   DOC --> IN
-  HIST --> IN
   Q --> IN
-  IN --> CMP
-  CMP --> PACK
-  PACK --> CHAT
-  CHAT -->|"prompt ≤ ~1024"| USB
-  USB --> PFOR
+  IN --> CHAT
+  CHAT -->|"raw prompt"| USB
+  USB --> CMP
+  CMP -->|"fitted ≤400B"| PFOR
   PFOR --> OUT
-  OUT -->|"distill turn → MEM"| HIST
 ```
 
 ### Trust boundary
@@ -72,7 +68,7 @@ flowchart TB
 | Stage | Where | Role |
 | --- | --- | --- |
 | Ingest long text | Host | Accept ~8k-token source |
-| Compress 8:1 | Host `compress.py` | Lossy but structured packet |
+| Compress | P4 `llmm_compress.c` | Lossy extractive packet (≤400 B fitted) |
 | Generate | P4 PFor | Native 1,024 KV only |
 | Roll memory | Host | `MEM` keeps multi-turn effective context |
 
@@ -132,10 +128,12 @@ PKT  ████                              ~1000 tokens  →  PFor (1024 win
 
 ## Status
 
-**In progress.**
+**Phase 1 on-device compress landed.**
 
-- Phase 0: UART-host firmware + model on the WT9932P4-TINY. Flash and chat share the **CH343 UART** (COM5 on this PC).
-- Phase 1: host compressor landed in `runtime/host/compress.py` and `--compress` on `chat.py`.
+- Host sends raw ChatML up to **48 KiB**; board `llmm_compress.c` fits long prompts to **≤400 B** (≤~80 tok) to cut prefill time. Raw **≤1024 B** bypasses compress.
+- `chat.py --compress --context-file …` = **on-device** path (no PC trim).
+- `compress.py` remains for **offline** ratio checks only.
+- Verified: ~8k-token source → **~100** fitted prompt tokens; long TTFT ~**7.6 s** on COM5 (decode ~8 tok/s).
 
 ### Windows ports (important)
 
@@ -151,12 +149,12 @@ If chat times out with no `LLMRDY05`, rebuild/flash the UART-host firmware (`LLM
 ### Phase 1 commands
 
 ```bash
-# Offline compression check (no board)
+# Offline compression check (no board) — host reference only
 python runtime/host/compress.py \
   --source runtime/host/testdata/sample_long_context.md \
   --question "Why do plant cells need chloroplasts?"
 
-# On-device (CH343 UART — same port as flash)
+# On-device compress (PC sends raw long prompt)
 python runtime/host/chat.py --port COM5 \
   --artifact pfor-180m.llmcraft \
   --compress \
