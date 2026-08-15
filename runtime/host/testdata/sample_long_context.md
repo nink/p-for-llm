@@ -1,0 +1,42 @@
+# Sample long context for Phase 1 compression demos (offline / on-device).
+# Synthetic article ~8k+ characters so extractive 8:1 has room to work.
+
+## Plant Cells and Energy
+
+Plant cells differ from animal cells in several structural ways. A plant cell has a rigid cell wall made primarily of cellulose outside the plasma membrane. Many plant cells contain chloroplasts, the organelles that capture light energy. Animal cells do not have chloroplasts or cellulose walls. Both plant and animal cells have a nucleus, cytoplasm, mitochondria, and a plasma membrane.
+
+Chloroplasts contain chlorophyll, a green pigment that absorbs light. During photosynthesis, plants convert carbon dioxide and water into sugars and release oxygen. The simplified overall equation is often written as six CO2 plus six H2O producing C6H12O6 plus six O2 in the presence of light. Photosynthesis occurs mainly in leaves. Mitochondria then break down sugars to release usable energy as ATP through cellular respiration.
+
+A common misconception is that plants do not have mitochondria. In fact, plants need mitochondria to use the sugars they produce. Another misconception is that photosynthesis and respiration never happen in the same organism; plant cells perform both. At night, photosynthesis slows or stops without light, but respiration continues.
+
+## Vacuoles and Support
+
+Mature plant cells often have a large central vacuole that stores water, ions, and waste. Turgor pressure from the vacuole pressing against the cell wall helps keep soft stems upright. When a plant loses water, turgor drops and the plant wilts. Animal cells may have smaller vacuoles, but not the same dominant central vacuole typical of many plant cells.
+
+## Membrane Transport Basics
+
+The plasma membrane is selectively permeable. Osmosis is the diffusion of water across a membrane. In a hypotonic environment, water tends to enter a plant cell; the wall usually prevents bursting. In a hypertonic environment, water leaves the cell and the membrane can pull away from the wall in plasmolysis. Students sometimes confuse osmosis with active transport. Active transport moves substances against a gradient and requires ATP. Facilitated diffusion uses protein channels but still follows the concentration gradient and does not require ATP.
+
+## Why Chloroplasts Matter
+
+Chloroplasts are the reason plant cells can build organic molecules from inorganic carbon dioxide using sunlight. Without chloroplasts, a typical plant cell could not perform photosynthesis. Roots usually have few or no chloroplasts because they are underground and not specialized for light capture. Green stems and leaves are rich in chloroplasts. The presence of chloroplasts is therefore a key identifying feature when comparing plant and animal cells under a microscope, along with the cell wall and large central vacuole.
+
+## Study Notes for Quick Review
+
+1. Plant only: cell wall, chloroplasts, large central vacuole.
+2. Shared: nucleus, membrane, cytoplasm, mitochondria.
+3. Photosynthesis stores energy in sugars; respiration releases it as ATP.
+4. Chlorophyll absorbs light; oxygen is a byproduct of photosynthesis.
+5. Wilting relates to loss of turgor pressure in the vacuole and wall system.
+
+## Extra Reading Padding for Compression Tests
+
+Educators often ask students to explain processes in their own words rather than memorize slogans. Clear explanations mention inputs, outputs, and where in the cell a process happens. When answering exam questions, name the organelle, state the main function, and give one distinguishing comparison. Practice helps students avoid mixing terms such as chloroplast and chlorophyll, or photosynthesis and respiration. Classroom labs may include observing Elodea leaves, estimating starch with iodine, or watching plasmolysis under salt water. Safety rules still apply: handle glass slides carefully, wash hands, and follow teacher instructions for chemicals.
+
+Repeated review across several days improves retention more than one long cramming session. Short quizzes on definitions, then on comparisons, then on application problems, build confidence. If a student can teach the difference between plant and animal cells to a peer, they usually understand it. Encourage diagrams with labels for wall, membrane, nucleus, vacuole, chloroplast, and mitochondrion. Color is optional; accuracy of labels is not.
+
+Additional filler paragraphs follow so the source is long enough for an eight-to-one compression demonstration while still containing the key facts above. Learning science is iterative. Read, sketch, quiz, and revise misconceptions. Teachers may provide sentence frames such as "Plant cells need chloroplasts because..." or "Both cell types have mitochondria so that...". Using evidence from the text beats guessing. Numbers and names in a passage are high-value anchors for extractive summarization tools and for human note-taking alike.
+
+In many curricula, this unit appears before genetics or ecology. Students who master organelle roles early find later chapters easier. Keep returning to the central question: how does structure support function in cells? The chloroplast-photosynthesis link is one of the cleanest examples. The vacuole-turgor link is another. The wall-protection and shape link is a third. Together they explain why plant cells look and behave differently from animal cells even though both are eukaryotic.
+
+End of sample pack. Key answer target: plant cells need chloroplasts to perform photosynthesis and produce sugars from light, carbon dioxide, and water.

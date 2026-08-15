@@ -132,4 +132,32 @@ PKT  ████                              ~1000 tokens  →  PFor (1024 win
 
 ## Status
 
-**Planned.** Phase 0 hardware bring-up first; then Phase 1 host-side MVP; optimize only after that works.
+**In progress.**
+
+- Phase 0: firmware + model flashed; board boots (`p_for_llm_esp32p4`). Chat protocol uses **USB Serial/JTAG** (Espressif `VID_303A`), not the CH343 console UART.
+- Phase 1: host compressor landed in `runtime/host/compress.py` and `--compress` on `chat.py`.
+
+### Windows ports (important)
+
+| Port | Chip | Role |
+| --- | --- | --- |
+| CH343 / CH9102 COM | USB-UART bridge | Console log + `esptool` flash |
+| USB Serial Device (Espressif `303A:1001`) | USB-Serial-JTAG | **`chat.py` / `smoke_test.py` host protocol** |
+
+If chat times out with no `LLMRDY05`, plug the board USB that enumerates as Espressif JTAG/serial (often a second cable or the main USB-C once drivers bind).
+
+### Phase 1 commands
+
+```bash
+# Offline compression check (no board)
+python runtime/host/compress.py \
+  --source runtime/host/testdata/sample_long_context.md \
+  --question "Why do plant cells need chloroplasts?"
+
+# On-device (Espressif USB Serial/JTAG port)
+python runtime/host/chat.py --port COMx \
+  --artifact pfor-180m.llmcraft \
+  --compress \
+  --context-file runtime/host/testdata/sample_long_context.md
+```
+

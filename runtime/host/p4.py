@@ -76,15 +76,52 @@ class ArtifactLayout:
 
 
 class SerialTransport:
-    """A small raw POSIX serial transport with no third-party dependency."""
+    """USB serial transport for POSIX (termios) or Windows (pyserial)."""
 
     def __init__(self, port: str, timeout: float = 30.0) -> None:
         self.port = port
         self.timeout = timeout
         self.fd: int | None = None
+        self._serial = None
 
     def open(self) -> "SerialTransport":
-        if termios is None or os.name == "nt":
+        if os.name == "nt":
+            try:
+                import serial
+            except ImportError as error:
+                raise RuntimeError(
+                    "Windows host client requires pyserial (python -m pip install pyserial)"
+                ) from error
+            try:
+                self._serial = serial.Serial(
+                    port=self.port,
+                    baudrate=BAUD_RATE,
+                    bytesize=serial.EIGHTBITS,
+                    parity=serial.PARITY_NONE,
+                    stopbits=serial.STOPBITS_ONE,
+                    timeout=0.2,
+                    write_timeout=5.0,
+                    dsrdtr=False,
+                    rtscts=False,
+                )
+                # Opening COM ports on Windows often asserts DTR/RTS and holds ESP in reset.
+                self._serial.dtr = False
+                self._serial.rts = False
+                time.sleep(0.05)
+                # Pulse RTS to reboot into application firmware, then release.
+                self._serial.rts = True
+                time.sleep(0.05)
+                self._serial.rts = False
+                time.sleep(1.0)
+                self._serial.reset_input_buffer()
+                self._serial.reset_output_buffer()
+                time.sleep(0.2)
+            except Exception:
+                self.close()
+                raise
+            return self
+
+        if termios is None:
             raise RuntimeError("the host client requires a POSIX USB serial port")
         flags = os.O_RDWR | os.O_NOCTTY
         if hasattr(os, "O_CLOEXEC"):
@@ -109,11 +146,18 @@ class SerialTransport:
         return self
 
     def _require_open(self) -> int:
+        if self._serial is not None:
+            return -1
         if self.fd is None:
             raise RuntimeError("USB serial port is not open")
         return self.fd
 
     def _wait(self, writable: bool, deadline: float) -> None:
+        if self._serial is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"timed out communicating with {self.port}")
+            return
         fd = self._require_open()
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -132,9 +176,21 @@ class SerialTransport:
             raise ValueError("read size cannot be negative")
         if size == 0:
             return b""
-        fd = self._require_open()
         deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
         result = bytearray()
+        if self._serial is not None:
+            while len(result) < size:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(f"timed out communicating with {self.port}")
+                chunk = self._serial.read(size - len(result))
+                if chunk:
+                    result.extend(chunk)
+                    continue
+                time.sleep(min(0.01, remaining))
+            return bytes(result)
+
+        fd = self._require_open()
         while len(result) < size:
             self._wait(False, deadline)
             chunk = os.read(fd, size - len(result))
@@ -144,9 +200,21 @@ class SerialTransport:
         return bytes(result)
 
     def write_all(self, data: bytes | bytearray | memoryview, timeout: float | None = None) -> None:
-        fd = self._require_open()
         deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
         view = memoryview(data)
+        if self._serial is not None:
+            while view:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(f"timed out communicating with {self.port}")
+                written = self._serial.write(view)
+                if written is None or written <= 0:
+                    time.sleep(min(0.01, remaining))
+                    continue
+                view = view[written:]
+            return
+
+        fd = self._require_open()
         while view:
             self._wait(True, deadline)
             written = os.write(fd, view)
@@ -155,6 +223,11 @@ class SerialTransport:
             view = view[written:]
 
     def close(self) -> None:
+        if self._serial is not None:
+            try:
+                self._serial.close()
+            finally:
+                self._serial = None
         if self.fd is not None:
             os.close(self.fd)
             self.fd = None
@@ -325,8 +398,18 @@ class P4Device:
         checksum = _file_crc32(layout)
         self.transport.write_all(b"LLMPSR05")
         self.transport.write_all(struct.pack("<II", layout.psram_bytes, checksum))
+        sent = 0
+        last_report = 0
         for chunk in _iter_file_region(layout):
             self.transport.write_all(chunk)
+            sent += len(chunk)
+            if sent - last_report >= 1024 * 1024 or sent == layout.psram_bytes:
+                pct = 100.0 * sent / layout.psram_bytes if layout.psram_bytes else 100.0
+                print(
+                    f"PSRAM load: {sent}/{layout.psram_bytes} bytes ({pct:.1f}%)",
+                    flush=True,
+                )
+                last_report = sent
         frame = self._read_frame(b"LLMLOAD5", 20)
         _, status, psram_bytes, payload_id = struct.unpack("<8siII", frame)
         _check_status("PSRAM load", status)
@@ -431,7 +514,8 @@ class P4Device:
             return
         self._closed = True
         try:
-            if self.transport.fd is not None and self._last_info is not None:
+            port_open = self.transport.fd is not None or self.transport._serial is not None
+            if port_open and self._last_info is not None:
                 self.bye()
         except (OSError, ProtocolError, TimeoutError):
             pass
