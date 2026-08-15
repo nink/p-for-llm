@@ -134,17 +134,19 @@ PKT  ████                              ~1000 tokens  →  PFor (1024 win
 
 **In progress.**
 
-- Phase 0: firmware + model flashed; board boots (`p_for_llm_esp32p4`). Chat protocol uses **USB Serial/JTAG** (Espressif `VID_303A`), not the CH343 console UART.
+- Phase 0: UART-host firmware + model on the WT9932P4-TINY. Flash and chat share the **CH343 UART** (COM5 on this PC).
 - Phase 1: host compressor landed in `runtime/host/compress.py` and `--compress` on `chat.py`.
 
 ### Windows ports (important)
 
+This board has one usable USB-UART. Stock upstream firmware talks host protocol on Espressif USB-Serial-JTAG (often COM3); this fork moves host protocol onto **UART0 / CH343**, the same port used to flash.
+
 | Port | Chip | Role |
 | --- | --- | --- |
-| CH343 / CH9102 COM | USB-UART bridge | Console log + `esptool` flash |
-| USB Serial Device (Espressif `303A:1001`) | USB-Serial-JTAG | **`chat.py` / `smoke_test.py` host protocol** |
+| USB-Enhanced-SERIAL CH343 (**COM5**) | USB-UART bridge | **Flash + `chat.py` / `smoke_test.py`** |
+| USB Serial Device (Espressif, often COM3) | USB-Serial-JTAG | Unused on this single-USB board |
 
-If chat times out with no `LLMRDY05`, plug the board USB that enumerates as Espressif JTAG/serial (often a second cable or the main USB-C once drivers bind).
+If chat times out with no `LLMRDY05`, rebuild/flash the UART-host firmware (`LLMM_HOST_UART=1`) and use COM5 — do not switch to COM3.
 
 ### Phase 1 commands
 
@@ -154,8 +156,8 @@ python runtime/host/compress.py \
   --source runtime/host/testdata/sample_long_context.md \
   --question "Why do plant cells need chloroplasts?"
 
-# On-device (Espressif USB Serial/JTAG port)
-python runtime/host/chat.py --port COMx \
+# On-device (CH343 UART — same port as flash)
+python runtime/host/chat.py --port COM5 \
   --artifact pfor-180m.llmcraft \
   --compress \
   --context-file runtime/host/testdata/sample_long_context.md

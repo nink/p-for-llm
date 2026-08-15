@@ -1,10 +1,17 @@
-set(LLMM_REQUIRES esp_driver_usb_serial_jtag esp_partition esp_timer)
+set(LLMM_HOST_UART 1)
+if(LLMM_HOST_UART)
+    set(LLMM_REQUIRES esp_driver_uart esp_partition esp_timer)
+else()
+    set(LLMM_REQUIRES esp_driver_usb_serial_jtag esp_partition esp_timer)
+endif()
 set(LLMM_DEBUG_C 0)
 set(LLMM_DEBUG_ZIG false)
 
 idf_component_register(SRCS "main.c" INCLUDE_DIRS "."
                        REQUIRES ${LLMM_REQUIRES})
-target_compile_definitions(${COMPONENT_LIB} PRIVATE LLMM_DEBUG=${LLMM_DEBUG_C})
+target_compile_definitions(${COMPONENT_LIB} PRIVATE
+    LLMM_DEBUG=${LLMM_DEBUG_C}
+    LLMM_HOST_UART=${LLMM_HOST_UART})
 
 set(LLMM_SOURCE "${CMAKE_CURRENT_LIST_DIR}/llmm.zig")
 set(LLMM_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/llmm.o")

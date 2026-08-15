@@ -15,9 +15,24 @@
 #include "riscv/csr.h"
 #include "soc/cache_struct.h"
 #endif
+#if LLMM_HOST_UART
+#include "driver/uart.h"
+#else
 #include "driver/usb_serial_jtag.h"
+#endif
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+
+#ifndef LLMM_HOST_UART
+#define LLMM_HOST_UART 0
+#endif
+
+#if LLMM_HOST_UART
+#define LLMM_HOST_UART_PORT UART_NUM_0
+#define LLMM_HOST_UART_TX_GPIO 37
+#define LLMM_HOST_UART_RX_GPIO 38
+#define LLMM_HOST_UART_BAUD 460800
+#endif
 
 #define LLMM_CHAT_END_TOKEN 32755U
 
@@ -489,7 +504,11 @@ static inline int llmm_usb_read_once(void *buffer, uint32_t bytes, TickType_t wa
     llmm_profile_t *profile = llmm_active_profile;
     const uint32_t started = profile != NULL ? llmm_p4_cycle_count() : 0U;
 #endif
+#if LLMM_HOST_UART
+    const int count = uart_read_bytes(LLMM_HOST_UART_PORT, buffer, bytes, wait);
+#else
     const int count = usb_serial_jtag_read_bytes(buffer, bytes, wait);
+#endif
 #if LLMM_DEBUG
     if (profile != NULL) {
         if (count > 0) profile->usb_bytes[0] += (uint32_t)count;
@@ -506,7 +525,12 @@ static inline int llmm_usb_write_once(const void *buffer, size_t bytes, TickType
     llmm_profile_t *profile = llmm_active_profile;
     const uint32_t started = profile != NULL ? llmm_p4_cycle_count() : 0U;
 #endif
+#if LLMM_HOST_UART
+    (void)wait;
+    const int count = uart_write_bytes(LLMM_HOST_UART_PORT, buffer, bytes);
+#else
     const int count = usb_serial_jtag_write_bytes(buffer, bytes, wait);
+#endif
 #if LLMM_DEBUG
     if (profile != NULL) {
         if (count > 0) profile->usb_bytes[1] += (uint32_t)count;
@@ -883,6 +907,22 @@ static uint32_t llmm_session_tokens(const llmm_runtime_t *runtime)
 static int llmm_runtime_init(llmm_runtime_t *runtime)
 {
     memset(runtime, 0, sizeof(*runtime));
+#if LLMM_HOST_UART
+    const uart_config_t uart_config = {
+        .baud_rate = LLMM_HOST_UART_BAUD,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_DEFAULT,
+    };
+    ESP_ERROR_CHECK(uart_driver_install(LLMM_HOST_UART_PORT, 4096, 4096, 0, NULL, 0));
+    ESP_ERROR_CHECK(uart_param_config(LLMM_HOST_UART_PORT, &uart_config));
+    ESP_ERROR_CHECK(uart_set_pin(LLMM_HOST_UART_PORT, LLMM_HOST_UART_TX_GPIO, LLMM_HOST_UART_RX_GPIO,
+                                 UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    ESP_LOGI("llmm", "host protocol on UART0 @ %d baud (GPIO%d TX / GPIO%d RX)",
+             LLMM_HOST_UART_BAUD, LLMM_HOST_UART_TX_GPIO, LLMM_HOST_UART_RX_GPIO);
+#else
     const usb_serial_jtag_driver_config_t config = {
         .rx_buffer_size = 4096,
         .tx_buffer_size = 4096,
@@ -890,6 +930,7 @@ static int llmm_runtime_init(llmm_runtime_t *runtime)
     if (!usb_serial_jtag_is_driver_installed()) {
         ESP_ERROR_CHECK(usb_serial_jtag_driver_install((usb_serial_jtag_driver_config_t *)&config));
     }
+#endif
     if (llmm_map_asset(0x41, LLMM_MANIFEST_FLASH_OFFSET, LLMM_MANIFEST_FLASH_BYTES, "manifest",
                        &runtime->storage.manifest_xip, &runtime->storage.manifest_xip_bytes,
                        &runtime->manifest_map_handle) != 0) return -190;

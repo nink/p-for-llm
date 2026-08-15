@@ -112,7 +112,8 @@ class SerialTransport:
                 self._serial.rts = True
                 time.sleep(0.05)
                 self._serial.rts = False
-                time.sleep(1.0)
+                # ESP32-P4 app needs ~2–3s after reset before LLMHOST is ready.
+                time.sleep(3.0)
                 self._serial.reset_input_buffer()
                 self._serial.reset_output_buffer()
                 time.sleep(0.2)
