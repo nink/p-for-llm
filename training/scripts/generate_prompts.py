@@ -29,7 +29,9 @@ def format_chat(prompt: str) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--checkpoint-dir", type=Path, required=True)
+    parser.add_argument("--checkpoint-dir", type=Path)
+    parser.add_argument("--checkpoint", type=Path)
+    parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument(
         "--tokenizer",
         type=Path,
@@ -38,10 +40,14 @@ def main() -> None:
     parser.add_argument("--max-new-tokens", type=int, default=64)
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
-
-    checkpoint = latest_training_checkpoint(args.checkpoint_dir)
-    if checkpoint is None:
-        raise SystemExit(f"no checkpoint in {args.checkpoint_dir}")
+    if args.checkpoint is not None:
+        checkpoint = args.checkpoint
+    elif args.checkpoint_dir is not None:
+        checkpoint = latest_training_checkpoint(args.checkpoint_dir)
+    else:
+        raise SystemExit("pass --checkpoint or --checkpoint-dir")
+    if checkpoint is None or not checkpoint.is_file():
+        raise SystemExit(f"no checkpoint at {checkpoint}")
     device = torch.device(args.device)
     tokenizer = Tokenizer.from_file(str(args.tokenizer))
     eos = tokenizer.token_to_id("<|im_end|>")

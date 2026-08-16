@@ -103,3 +103,17 @@ def load_training_checkpoint(
     if device.type == "cuda" and cuda_rng_state is not None:
         torch.cuda.set_rng_state(cuda_rng_state.cpu(), device)
     return TrainingState(**payload["training_state"])
+
+
+def load_model_weights_only(
+    path: Path,
+    model: nn.Module,
+    device: torch.device,
+) -> dict[str, Any]:
+    """Load model tensors from a checkpoint and ignore optimizer/run-contract."""
+    with torch.serialization.safe_globals([BitNetTrainingLinearWeight]):
+        payload = torch.load(path, map_location=device, weights_only=True)
+    if "model" not in payload:
+        raise ValueError(f"checkpoint has no model tensors: {path}")
+    model.load_state_dict(payload["model"])
+    return payload.get("run_contract") or {}

@@ -263,6 +263,7 @@ class Top1MoE(nn.Module):
     def __init__(self, config: ModelConfig) -> None:
         super().__init__()
         self.n_experts = config.n_experts
+        self.top_k = config.router_top_k
         self.router = BitLinear(
             config.d_model,
             config.n_experts,
@@ -273,7 +274,17 @@ class Top1MoE(nn.Module):
     def _route(self, x: Tensor) -> tuple[Tensor, Tensor, Tensor, Tensor]:
         router_logits = self.router(x).float()
         router_probabilities = F.softmax(router_logits, dim=-1)
-        selected_probabilities, selected_experts = router_probabilities.max(dim=-1)
+        if self.top_k == 1:
+            selected_probabilities, selected_experts = router_probabilities.max(dim=-1)
+            selected_probabilities = selected_probabilities.unsqueeze(-1)
+            selected_experts = selected_experts.unsqueeze(-1)
+        else:
+            selected_probabilities, selected_experts = router_probabilities.topk(
+                self.top_k, dim=-1
+            )
+            selected_probabilities = selected_probabilities / selected_probabilities.sum(
+                dim=-1, keepdim=True
+            ).clamp_min(1e-12)
         return (
             router_logits,
             router_probabilities,
@@ -447,30 +458,38 @@ class Top1MoE(nn.Module):
             selected_probabilities,
             selected_experts,
         ) = self._route(x)
-        counts = self._expert_counts(selected_experts, valid_mask)
-        if valid_mask is None:
-            dispatch_counts = expert_counts = counts
-        else:
-            dispatch_counts, expert_counts = counts.unbind(0)
-        output = self._dispatch(
-            x,
-            selected_probabilities,
-            selected_experts,
-            padded_rows=(
-                _CUDA_MOE_DISPATCH_ROWS if x.device.type == "cuda" else None
-            ),
-            expert_counts=dispatch_counts,
+        padded_rows = _CUDA_MOE_DISPATCH_ROWS if x.device.type == "cuda" else None
+        output = torch.zeros_like(x)
+        expert_counts = torch.zeros(
+            self.n_experts, device=x.device, dtype=torch.long
         )
+        for slot in range(self.top_k):
+            slot_experts = selected_experts[..., slot]
+            slot_probabilities = selected_probabilities[..., slot]
+            counts = self._expert_counts(slot_experts, valid_mask)
+            if valid_mask is None:
+                slot_dispatch = slot_expert = counts
+            else:
+                slot_dispatch, slot_expert = counts.unbind(0)
+            output = output + self._dispatch(
+                x,
+                slot_probabilities,
+                slot_experts,
+                padded_rows=padded_rows,
+                expert_counts=slot_dispatch,
+            )
+            expert_counts = expert_counts + slot_expert
 
         flat_probabilities = router_probabilities.flatten(0, 1)
-        flat_valid = (
-            torch.ones_like(selected_experts, dtype=flat_probabilities.dtype)
+        token_valid = (
+            torch.ones(x.shape[:2], device=x.device, dtype=flat_probabilities.dtype)
             if valid_mask is None
             else valid_mask.to(dtype=flat_probabilities.dtype)
-        ).flatten()
+        )
+        flat_valid = token_valid.flatten()
         valid_token_count = flat_valid.sum().clamp_min(1.0)
         token_fraction = expert_counts.to(dtype=flat_probabilities.dtype)
-        token_fraction = token_fraction / valid_token_count
+        token_fraction = token_fraction / (valid_token_count * self.top_k)
         mean_router_probability = (
             flat_probabilities * flat_valid.unsqueeze(-1)
         ).sum(dim=0) / valid_token_count
@@ -489,15 +508,24 @@ class Top1MoE(nn.Module):
     def forward_inference(self, x: Tensor) -> Tensor:
         _, _, selected_probabilities, selected_experts = self._route(x)
         if x.device.type == "cpu" and x.shape[:2] == (1, 1):
-            expert_index = int(selected_experts.item())
-            expert_output = self.experts.forward_one(
-                x.flatten(0, 1),
-                expert_index,
-            ).view_as(x)
-            return expert_output * selected_probabilities.to(
-                dtype=expert_output.dtype
-            ).unsqueeze(-1)
-        return self._dispatch(x, selected_probabilities, selected_experts)
+            output = torch.zeros_like(x)
+            for slot in range(self.top_k):
+                expert_index = int(selected_experts[0, 0, slot].item())
+                expert_output = self.experts.forward_one(
+                    x.flatten(0, 1),
+                    expert_index,
+                ).view_as(x)
+                scale = selected_probabilities[..., slot].to(dtype=expert_output.dtype)
+                output = output + expert_output * scale.unsqueeze(-1)
+            return output
+        output = torch.zeros_like(x)
+        for slot in range(self.top_k):
+            output = output + self._dispatch(
+                x,
+                selected_probabilities[..., slot],
+                selected_experts[..., slot],
+            )
+        return output
 
 
 class TransformerBlock(nn.Module):

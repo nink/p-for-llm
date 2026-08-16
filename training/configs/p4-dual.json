@@ -1,11 +1,138 @@
 {
   "name": "p4-dual",
-  "n_layers": 12,
-  "d_model": 192,
-  "ffn_hidden": 512,
-  "n_experts": 58,
-  "experts_per_board": 29,
-  "boards": ["sun", "mercury"],
-  "interconnect": "ethernet",
-  "notes": "Same PLE-MoE as single-chip PFor, double expert count. Coordinator (Sun) keeps attention, KV, embeddings, routers, PLE. Each board stores 29 experts/layer. Top-1 RPC of 192-byte activations per layer over TCP 8742."
+  "status": "do-not-train-yet",
+  "purpose": "Measured-first path to a better 1- or 2-board model. Independent review 2026-08-15 rejected opening with a 58-expert from-scratch run.",
+  "current_phase": "layer-pipeline-and-24l-upcycle",
+  "hop_protocol": {
+    "status": "mercury-ready; sun-needs-com5-app-flash",
+    "do_not_flash": "sun weights; app-flash hop firmware only when COM5 is plugged",
+    "split": "layers 0-5 coordinator, 6-11 worker",
+    "commands": {
+      "LLMHOP05": "token, position, layer_begin, layer_end, score_output, flags, f32[192] hidden -> LLMHOK05",
+      "LLMHSL05": "on-device split vs full token_step loopback"
+    },
+    "host": "python runtime/host/hop_worker.py --board mercury",
+    "two_board": "python runtime/host/hop_two_boards.py (needs hop firmware on Sun)"
+  },
+  "phase_24l": {
+    "name": "depth-upcycle reconstructed original to 24 layers, FineWeb continue, top-1",
+    "upcycle_checkpoint": "/home/nink/pfor-ckpts/main-24l-upcycle/step-00000000.pt",
+    "checkpoint_dir": "/home/nink/pfor-ckpts/main-24l-continue",
+    "n_layers": 24,
+    "parameters": 355548848,
+    "router_top_k": 1,
+    "lr": 1e-4,
+    "epochs": 3,
+    "target_steps": 85224,
+    "target_tokens": "~2.8e9 (3 FineWeb-Edu shard epochs)",
+    "smoke_causal_loss": 3.8355,
+    "note": "Do not export or flash until GPU greedy+val beat reconstructed original. Then split layers 0-11 Sun, 12-23 Mercury."
+  },
+  "phase_a_run": {
+    "checkpoint_dir": "/home/nink/pfor-ckpts/main-top2-continue",
+    "pid": 442077,
+    "resume_weights": "/home/nink/pfor-ckpts/original-reconstructed/step-00000000.pt",
+    "router_top_k": 2,
+    "lr": 1e-4,
+    "target_steps": 28408,
+    "target_tokens": "~931e6 (1 FineWeb-Edu shard epoch)",
+    "smoke_causal_loss": 4.738,
+    "note": "Do not flash Sun. GPU greedy vs reconstructed original after ALL_DONE."
+  },
+  "prerequisites": {
+    "reconstruct_original_pt": "import_aircraft.py from pfor-180m.llmcraft; re-export SHA and greedy match vs Sun",
+    "gpu_baseline": "held-out val loss + greedy 5-prompt set of the reconstructed original",
+    "sun_stage_profile": "LLMPRQ05 dump; needs firmware LLMM_DEBUG=1. Go/no-go for expert RPC: decode expert_ms vs 12 * RTT",
+    "mercury_ethernet_rtt": "192-byte echo x12 under decode load; p50/p99. Switch required. mercury.eth_ip is currently null",
+    "train_throughput": "tokens/sec at seq 256 and 1024 on 170HX; FineWeb 1B was ~154k tok/s at seq 1024 (28,408 steps in ~1h41m)"
+  },
+  "phase_a": {
+    "name": "single-board top-2 on reconstructed original",
+    "why": "Doubles active FFN. Byte accounting says the 12 routed experts are ~9% of ~7.5 MB/token (Q8 head is 6.29 MB), so decode cost is likely +10-25% not 2x. Measure with expert/output_head profile. No RPC, no second board, no new artifact.",
+    "init": "reconstructed pfor-180m.llmcraft, not from-scratch",
+    "tokens": "1e9 to 2e9 continue-train after Top2MoE exists",
+    "gate": "GPU greedy + val loss must beat reconstructed original before any flash"
+  },
+  "phase_b": {
+    "name": "two-board decision",
+    "when": "after phase A numbers and measured RTT/profile",
+    "options": {
+      "expert_shard": {
+        "n_experts": 58,
+        "experts_per_board": 29,
+        "router": "grouped-top2 with per-group softmax and per-group balance loss",
+        "init": "upcycle 29 to 58 from reconstructed/top-2 checkpoint",
+        "note": "grouped top-2 is a constrained subset of unconstrained top-2; measure the gap on GPU first. 58 experts cannot fit in 32 MB PSRAM."
+      },
+      "layer_pipeline": {
+        "split": "layers 0-5 Sun, 6-11 Mercury",
+        "hops_per_token": 1,
+        "tradeoff": "1 RTT/token, ~7 MB flash and ~10 MB PSRAM freed per board, ~2x decode for 2x depth"
+      }
+    }
+  },
+  "architecture_draft": {
+    "n_layers": 12,
+    "d_model": 192,
+    "ffn_hidden": 512,
+    "boards": {
+      "sun": "coordinator: embeddings, attention, KV, PLE, routers",
+      "mercury": "worker role depends on phase B choice"
+    },
+    "interconnect": "switched 10/100 Ethernet, never a hub",
+    "do_not": [
+      "split the existing 29 experts across two boards for accuracy",
+      "tensor-parallel the 192-wide residual",
+      "train on the P4s",
+      "start 12-18B from-scratch 58-expert training",
+      "fill PSRAM with a knowledge pack and 29 experts at once",
+      "score ChatML Q&A until after SFT",
+      "flash Sun until GPU beats the reconstructed original"
+    ]
+  },
+  "lessons_from_fineweb_1b": {
+    "from_scratch_1b_cannot_beat_upstream_12b": true,
+    "do_not_score_chat_prompts_until_after_sft": true,
+    "one_fineweb_shard_is_architecture_smoke_not_a_release": true,
+    "keep_sun_on_original_until_gpu_eval_wins": true,
+    "match_train_routing_to_deploy_routing": true,
+    "capability_plan_does_not_mix_data": "train.py uses capability-pretraining-plan.json only for LR schedule and seq-len asserts; selection blocks are unused. dclm/pes2o/finemath/python_edu/wikipedia have no pretraining.json entries."
+  },
+  "training_notes": {
+    "device": "CMP 170HX 64 GB at 192.168.72.70, CUDA_VISIBLE_DEVICES=0",
+    "batch_size": 32,
+    "gradient_accumulation_steps_candidate": 8,
+    "lr": "3e-4 needs retune if global batch grows",
+    "sft": "sft-v2 after a winning pretrain, with DCLM replay"
+  },
+  "measured": {
+    "profile_split": null,
+    "profile_blocked": "production firmware has LLMM_DEBUG=0; LLMPRQ05 is unknown and desyncs the TCP session. dump_profile.py is ready after a debug rebuild (Mercury only).",
+    "rtt_p50_ms": 2,
+    "rtt_p99_ms": 15,
+    "rtt_192b_under_decode_avg_ms": 4,
+    "mercury_eth_ip": "192.168.72.77",
+    "mercury_decode_ms_per_token": 148,
+    "hop_decision": "1-hop layer split is ~3% of decode; 12-hop expert RPC is ~30%. Do layer pipeline first.",
+    "layer_pipeline_mercury": {
+      "firmware": "app-flash COM6 only, MAC e8:f6:0a:e0:cb:9c",
+      "payload_id": "0x5b04ca1e",
+      "loopback_match": true,
+      "loopback_max_abs_diff": 0.0,
+      "loopback_token": 628,
+      "protocol_split_match": true,
+      "layers_0_5_board_us": 33113,
+      "layers_6_11_head_board_us": 84175,
+      "worker_hop_host_p50_ms": 89.29,
+      "worker_hop_host_p99_ms": 98.37,
+      "worker_hop_board_avg_ms": 84.89,
+      "note": "Exact hidden match vs full token_step. Sun not flashed. Same 180.9M weights; Mercury still holds the full net."
+    },
+    "tokens_per_sec_seq1024": 154000,
+    "tokens_per_sec_note": "FineWeb steps 200-28408: 09:51 to 11:31 (~100 min), ~4.3 step/s * 32 * 1024. First step 66s (compile). 12B tokens at this rate ~22 hours.",
+    "top2_single_board_decode_cost": null,
+    "reexport_sha_match": true,
+    "reexport_sha256": "d16fee5fe77d839eadae29d3816a9c28350db76c5242ee1ae92a1be12f428df6",
+    "reconstructed_pt": "/home/nink/pfor-ckpts/original-reconstructed/step-00000000.pt"
+  }
 }

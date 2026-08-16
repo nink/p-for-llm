@@ -70,6 +70,26 @@ class TextResult:
     elapsed_us: int
     prompt_tokens: int
     session_evicted: bool
+    profile: bytes | None = None
+    cpu_hz: int = 0
+
+
+@dataclass(frozen=True)
+class HopResult:
+    next_token: int
+    next_logit: float
+    elapsed_us: int
+    position: int
+    hidden: tuple[float, ...]
+
+
+@dataclass(frozen=True)
+class SplitLoopbackResult:
+    tokens_match: bool
+    split_token: int
+    full_token: int
+    max_abs_diff: float
+    elapsed_us: int
 
 
 @dataclass(frozen=True)
@@ -572,6 +592,7 @@ class P4Device:
         top_k: int = 20,
         random_state: int = 1,
         on_chunk: Callable[[str], None] | None = None,
+        profile: bool = False,
     ) -> TextResult:
         prompt_bytes = prompt.encode("utf-8") if isinstance(prompt, str) else bytes(prompt)
         if not 1 <= len(prompt_bytes) <= RAW_TEXT_MAX_BYTES:
@@ -593,14 +614,15 @@ class P4Device:
             top_k,
             random_state,
         )
-        self.transport.write_all(b"LLMTXT05" + request + prompt_bytes)
+        command = b"LLMPRQ05" if profile else b"LLMTXT05"
+        self.transport.write_all(command + request + prompt_bytes)
 
         chunks = bytearray()
         decoder = codecs.getincrementaldecoder("utf-8")("replace")
         prompt_tokens = 0
         session_evicted = False
         while True:
-            magic = self._read_magic({b"LLMTOK05", b"LLMCHN05", b"LLMDONE5"})
+            magic = self._read_magic({b"LLMTOK05", b"LLMCHN05", b"LLMDONE5", b"LLMERR05"})
             if magic == b"LLMTOK05":
                 count, flags = struct.unpack("<II", self.transport.read_exact(8))
                 if count > CONTEXT_LENGTH:
@@ -618,6 +640,12 @@ class P4Device:
                     piece = decoder.decode(chunk, final=False)
                     if piece:
                         on_chunk(piece)
+            elif magic == b"LLMERR05":
+                (status,) = struct.unpack("<i", self.transport.read_exact(4))
+                raise ProtocolError(
+                    f"board rejected {command.decode('ascii')} (status {status}); "
+                    "LLMPRQ05 needs firmware built with LLMM_DEBUG=1"
+                )
             elif magic == b"LLMDONE5":
                 status, generated, checksum, elapsed_us = struct.unpack(
                     "<iIII", self.transport.read_exact(16)
@@ -626,6 +654,16 @@ class P4Device:
                 tail = decoder.decode(b"", final=True)
                 if tail and on_chunk is not None:
                     on_chunk(tail)
+                profile_bytes = None
+                cpu_hz = 0
+                if profile:
+                    prf = self._read_magic({b"LLMPRF06"})
+                    if prf != b"LLMPRF06":
+                        raise ProtocolError("missing profile frame after LLMPRQ05")
+                    cpu_hz, nbytes = struct.unpack("<II", self.transport.read_exact(8))
+                    if nbytes == 0 or nbytes > 8192:
+                        raise ProtocolError(f"invalid profile payload size {nbytes}")
+                    profile_bytes = self.transport.read_exact(nbytes)
                 result = TextResult(
                     chunks.decode("utf-8", errors="replace"),
                     generated,
@@ -633,6 +671,8 @@ class P4Device:
                     elapsed_us,
                     prompt_tokens,
                     session_evicted,
+                    profile_bytes,
+                    cpu_hz,
                 )
                 if self._last_info is not None:
                     self._last_info = DeviceInfo(
@@ -646,6 +686,113 @@ class P4Device:
             else:
                 received = magic.decode("ascii", errors="replace")
                 raise ProtocolError(f"unexpected text frame {received!r}")
+
+    def hop(
+        self,
+        token: int,
+        *,
+        position: int = 0,
+        layer_begin: int = 6,
+        layer_end: int = 12,
+        score_output: bool = True,
+        flags: int = 0,
+        hidden: Iterable[float] | None = None,
+    ) -> HopResult:
+        """Run a layer range on an inbound residual (1-hop pipeline worker/coordinator)."""
+
+        if not 0 <= token < P4_CONFIG[0]:
+            raise ValueError("token is outside the P4 vocabulary")
+        if not 0 <= position < CONTEXT_LENGTH:
+            raise ValueError("position is outside the runtime context")
+        if not 0 <= layer_begin < layer_end <= P4_CONFIG[2]:
+            raise ValueError("layer range must satisfy 0 <= begin < end <= 12")
+        values = tuple(0.0 for _ in range(192)) if hidden is None else tuple(float(x) for x in hidden)
+        if len(values) != 192:
+            raise ValueError("hidden residual must have 192 floats")
+        request = struct.pack(
+            "<IIIIII",
+            token,
+            position,
+            layer_begin,
+            layer_end,
+            1 if score_output else 0,
+            flags,
+        )
+        request += struct.pack("<192f", *values)
+        self.transport.write_all(b"LLMHOP05" + request)
+        magic = self._read_magic({b"LLMHOK05", b"LLMERR05"})
+        if magic == b"LLMERR05":
+            (status,) = struct.unpack("<i", self.transport.read_exact(4))
+            raise ProtocolError(
+                f"board rejected LLMHOP05 (status {status}); flash the 1-hop firmware on Mercury"
+            )
+        header = self.transport.read_exact(20)
+        status, next_token, next_logit, elapsed_us, used_position = struct.unpack("<iIfII", header)
+        payload = self.transport.read_exact(192 * 4)
+        _check_status("layer hop", status)
+        out_hidden = struct.unpack("<192f", payload)
+        return HopResult(next_token, next_logit, elapsed_us, used_position, out_hidden)
+
+    def split_loopback(self, token: int, *, split_layer: int = 6) -> SplitLoopbackResult:
+        """Compare layers 0..split + split..12 against a full token step on this board."""
+
+        if not 0 <= token < P4_CONFIG[0]:
+            raise ValueError("token is outside the P4 vocabulary")
+        if not 0 < split_layer < P4_CONFIG[2]:
+            raise ValueError("split_layer must be between 1 and 11")
+        self.transport.write_all(b"LLMHSL05" + struct.pack("<II", token, split_layer))
+        magic = self._read_magic({b"LLMHSLD5", b"LLMERR05"})
+        if magic == b"LLMERR05":
+            (status,) = struct.unpack("<i", self.transport.read_exact(4))
+            raise ProtocolError(
+                f"board rejected LLMHSL05 (status {status}); flash the 1-hop firmware on Mercury"
+            )
+        status, tokens_match, split_token, full_token, max_abs_diff, elapsed_us = struct.unpack(
+            "<iIIIfI", self.transport.read_exact(24)
+        )
+        _check_status("split loopback", status)
+        return SplitLoopbackResult(bool(tokens_match), split_token, full_token, max_abs_diff, elapsed_us)
+
+    def pack_query(self, question: str) -> str:
+        """Retrieve from /sdcard/canada.kpack. Does not run the neural net."""
+        payload = question.encode("utf-8")
+        if not payload or len(payload) > 512:
+            raise ValueError("pack question must be 1–512 bytes")
+        self.transport.write_all(b"LLMPAK05" + struct.pack("<I", len(payload)) + payload)
+        magic = self._read_magic({b"LLMPAKD5", b"LLMERR05"})
+        if magic == b"LLMERR05":
+            (status,) = struct.unpack("<i", self.transport.read_exact(4))
+            raise ProtocolError(
+                f"board rejected LLMPAK05 (status {status}); flash pack firmware on Mercury"
+            )
+        status, alen = struct.unpack("<iI", self.transport.read_exact(8))
+        text = self.transport.read_exact(alen).decode("utf-8", errors="replace") if alen else ""
+        if status != 0:
+            raise ProtocolError(f"pack query failed (status {status})")
+        return text
+
+    def pack_put(self, path: str | Path, *, chunk_bytes: int = 32768) -> None:
+        """Write canada.kpack to the board microSD over the host link."""
+        data = Path(path).read_bytes()
+        if len(data) < 32:
+            raise ValueError("kpack file is too small")
+        total = len(data)
+        offset = 0
+        while offset < total:
+            part = data[offset : offset + chunk_bytes]
+            self.transport.write_all(
+                b"LLMPUT05" + struct.pack("<III", total, offset, len(part)) + part
+            )
+            magic = self._read_magic({b"LLMPUTD5", b"LLMERR05"})
+            if magic == b"LLMERR05":
+                (status,) = struct.unpack("<i", self.transport.read_exact(4))
+                raise ProtocolError(f"board rejected LLMPUT05 (status {status})")
+            (status,) = struct.unpack("<i", self.transport.read_exact(4))
+            if status != 0:
+                raise ProtocolError(f"pack put failed at offset {offset} (status {status})")
+            offset += len(part)
+            if offset == total or offset % (chunk_bytes * 32) == 0:
+                print(f"pack put {offset}/{total} bytes", flush=True)
 
     def bye(self) -> None:
         self.transport.write_all(b"LLMBYE05")

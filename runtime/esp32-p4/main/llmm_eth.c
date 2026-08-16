@@ -65,17 +65,16 @@ int llmm_eth_recv(void *buffer, uint32_t bytes, int timeout_ms)
 {
     int fd = s_client;
     if (fd < 0) return -1;
-    struct timeval tv = {
-        .tv_sec = timeout_ms / 1000,
-        .tv_usec = (timeout_ms % 1000) * 1000,
-    };
+    struct timeval tv;
     if (timeout_ms < 0) {
-        tv.tv_sec = 0;
+        /* Blocking host reads: never use a 0 timeout (that looks like a peer close). */
+        tv.tv_sec = 60;
         tv.tv_usec = 0;
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     } else {
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        tv.tv_sec = timeout_ms / 1000;
+        tv.tv_usec = (timeout_ms % 1000) * 1000;
     }
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     int n = recv(fd, buffer, bytes, 0);
     if (n == 0) {
         llmm_eth_drop_client();

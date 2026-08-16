@@ -1410,10 +1410,16 @@ const Sampler = struct {
     random_state: *u32,
 };
 
-fn tokenStep(
+// prepare_ple: 0 = embedding already RMSNormed, 1 = embed token into embedding only
+// (worker keeps the inbound residual in hidden), 2 = embed token into hidden+embedding
+// (coordinator / full token step).
+fn hiddenLayersStep(
     model: *const Handle,
     token: u32,
     position: usize,
+    layer_begin: u32,
+    layer_end: u32,
+    prepare_ple: u32,
     hidden: [*]f32,
     embedding: [*]f32,
     ple_vector: [*]f32,
@@ -1439,30 +1445,36 @@ fn tokenStep(
     sampler: ?Sampler,
 ) c_int {
     if (token >= Vocab or position >= Context or cache_capacity < Context) return -1;
+    if (layer_end > Layers or layer_begin >= layer_end) return -2;
     if (comptime enable_debug) {
         if (routes_len < Layers) return -1;
     }
     if (comptime enable_debug) {
         if (active_profile) |profile| {
-            profile.token_steps[active_profile_phase] += 1;
+            if (prepare_ple == 2) profile.token_steps[active_profile_phase] += 1;
             if (score_output != 0) profile.scored_steps[active_profile_phase] += 1;
         }
     }
-    var phase_started = profileStart();
-    var status = llmm_embedding_row_stream(model, token, hidden, Width);
-    if (status != 0) return -10 + status;
-    var index: usize = 0;
-    while (index < Width) : (index += 1) embedding[index] = hidden[index];
-    profileFinish(phase_started, .embedding);
-
-    phase_started = profileStart();
-    status = llmm_rmsnorm_stream(model, TopLevelPleNorm, embedding, embedding, Width, RmsEpsilon, scratch, scratch_bytes);
-    if (status != 0) return -900 + status;
-    profileFinish(phase_started, .ple_embedding);
-
-    var layer: u32 = 0;
-    while (layer < Layers) : (layer += 1) {
+    var status: c_int = 0;
+    if (prepare_ple == 1 or prepare_ple == 2) {
+        var phase_started = profileStart();
+        const embed_out = if (prepare_ple == 2) hidden else embedding;
+        status = llmm_embedding_row_stream(model, token, embed_out, Width);
+        if (status != 0) return -10 + status;
+        if (prepare_ple == 2) {
+            var index: usize = 0;
+            while (index < Width) : (index += 1) embedding[index] = hidden[index];
+        }
+        profileFinish(phase_started, .embedding);
         phase_started = profileStart();
+        status = llmm_rmsnorm_stream(model, TopLevelPleNorm, embedding, embedding, Width, RmsEpsilon, scratch, scratch_bytes);
+        if (status != 0) return -900 + status;
+        profileFinish(phase_started, .ple_embedding);
+    }
+
+    var layer: u32 = layer_begin;
+    while (layer < layer_end) : (layer += 1) {
+        const phase_started = profileStart();
         status = pleEmbeddingSliceNormalized(model, token, layer, embedding, ple_vector, ple_gate, scratch, scratch_bytes);
         if (status != 0) return -1_000 - @as(c_int, @intCast(layer)) * 100 + status;
         profileFinish(phase_started, .ple_embedding);
@@ -1507,7 +1519,7 @@ fn tokenStep(
                 }
             }
             if (layer_trace) |trace| {
-                index = 0;
+                var index: usize = 0;
                 while (index < Width) : (index += 1) trace[@as(usize, layer) * Width + index] = hidden[index];
             }
         }
@@ -1515,7 +1527,7 @@ fn tokenStep(
     if (score_output == 0) return 0;
     if (sampler) |value| {
         var candidate_count: usize = 0;
-        phase_started = profileStart();
+        var phase_started = profileStart();
         status = llmm_output_head_topk(model, hidden, query, scratch, scratch_bytes, value.candidates, value.candidate_capacity, value.top_k, &candidate_count);
         if (status != 0) return -500 + status;
         profileFinish(phase_started, .output_head);
@@ -1525,11 +1537,72 @@ fn tokenStep(
         profileFinish(phase_started, .sampling);
         return 0;
     }
-    phase_started = profileStart();
+    const phase_started = profileStart();
     status = llmm_output_head_argmax(model, hidden, query, scratch, scratch_bytes, next_token, next_logit);
     if (status != 0) return -500 + status;
     profileFinish(phase_started, .output_head);
     return 0;
+}
+
+fn tokenStep(
+    model: *const Handle,
+    token: u32,
+    position: usize,
+    hidden: [*]f32,
+    embedding: [*]f32,
+    ple_vector: [*]f32,
+    query: [*]f32,
+    key: [*]f32,
+    attended: [*]f32,
+    ple_gate: [*]f32,
+    expert_gate: [*]f32,
+    expert_up: [*]f32,
+    keys: [*]i8,
+    key_scales: [*]u16,
+    values: [*]i8,
+    value_scales: [*]u16,
+    cache_capacity: usize,
+    scratch: [*]u8,
+    scratch_bytes: usize,
+    routes: [*]u32,
+    routes_len: usize,
+    score_output: u32,
+    layer_trace: ?[*]f32,
+    next_token: *u32,
+    next_logit: *f32,
+    sampler: ?Sampler,
+) c_int {
+    return hiddenLayersStep(
+        model,
+        token,
+        position,
+        0,
+        Layers,
+        2,
+        hidden,
+        embedding,
+        ple_vector,
+        query,
+        key,
+        attended,
+        ple_gate,
+        expert_gate,
+        expert_up,
+        keys,
+        key_scales,
+        values,
+        value_scales,
+        cache_capacity,
+        scratch,
+        scratch_bytes,
+        routes,
+        routes_len,
+        score_output,
+        layer_trace,
+        next_token,
+        next_logit,
+        sampler,
+    );
 }
 
 pub export fn llmm_token_step(
@@ -1602,4 +1675,67 @@ pub export fn llmm_token_step_sampled(
         .random_state = random_state,
     };
     return tokenStep(model, token, position, hidden, embedding, ple_vector, query, key, attended, ple_gate, expert_gate, expert_up, keys, key_scales, values, value_scales, cache_capacity, scratch, scratch_bytes, routes, routes_len, score_output, layer_trace, next_token, next_logit, sampler);
+}
+
+pub export fn llmm_hidden_layers_step(
+    model: *const Handle,
+    token: u32,
+    position: usize,
+    layer_begin: u32,
+    layer_end: u32,
+    prepare_ple: u32,
+    hidden: [*]f32,
+    embedding: [*]f32,
+    ple_vector: [*]f32,
+    query: [*]f32,
+    key: [*]f32,
+    attended: [*]f32,
+    ple_gate: [*]f32,
+    expert_gate: [*]f32,
+    expert_up: [*]f32,
+    keys: [*]i8,
+    key_scales: [*]u16,
+    values: [*]i8,
+    value_scales: [*]u16,
+    cache_capacity: usize,
+    scratch: [*]u8,
+    scratch_bytes: usize,
+    routes: [*]u32,
+    routes_len: usize,
+    score_output: u32,
+    layer_trace: ?[*]f32,
+    next_token: *u32,
+    next_logit: *f32,
+) c_int {
+    return hiddenLayersStep(
+        model,
+        token,
+        position,
+        layer_begin,
+        layer_end,
+        prepare_ple,
+        hidden,
+        embedding,
+        ple_vector,
+        query,
+        key,
+        attended,
+        ple_gate,
+        expert_gate,
+        expert_up,
+        keys,
+        key_scales,
+        values,
+        value_scales,
+        cache_capacity,
+        scratch,
+        scratch_bytes,
+        routes,
+        routes_len,
+        score_output,
+        layer_trace,
+        next_token,
+        next_logit,
+        null,
+    );
 }

@@ -8,7 +8,9 @@ Offline **180.9M** PLE-MoE on **Waveshare ESP32-P4-ETH**. Native context is **1,
 
 This repo’s hardware, host tools, and training path are **not** the upstream WT9932P4-Tiny / USB-Serial-JTAG / RTX 5060 Ti setup.
 
-Details: **[docs/CONTEXT-COMPRESSION.md](docs/CONTEXT-COMPRESSION.md)** · **[docs/SD-PAYLOAD.md](docs/SD-PAYLOAD.md)**
+Details: **[docs/CONTEXT-COMPRESSION.md](docs/CONTEXT-COMPRESSION.md)** · **[docs/SD-PAYLOAD.md](docs/SD-PAYLOAD.md)** · **[docs/KNOWLEDGE-PACKS.md](docs/KNOWLEDGE-PACKS.md)** (parked 2026-08-15)
+
+![Knowledge packs on P4](docs/p4-knowledge-pack-cluster.png)
 
 ## Hardware (this fork)
 
@@ -31,7 +33,7 @@ Boards are named as planets in `runtime/host/boards.json`:
 | Name | Role | Transport (now) |
 | --- | --- | --- |
 | **Sun** | Coordinator | Ethernet `192.168.72.42:8742` |
-| **Mercury** | Expert worker | UART COM6 until a switch is in place |
+| **Mercury** | Expert worker | Ethernet `192.168.72.77:8742` (UART COM6 fallback) |
 
 Next desk cluster: **6× P4-ETH** on an **8-port gigabit switch** (P4 PHY still 100M). Same SKU, 32 MB PSRAM, A1/A2 microSD per board.
 

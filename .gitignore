@@ -6,4 +6,21 @@ runtime/esp32-p4/build/
 runtime/esp32-p4/sdkconfig
 runtime/host/__pycache__/
 *.pyc
+artifacts/
+reports/
+
+# Canada pack: keep builders + eval; skip dumps, weights, and the 17 MB .kpack
+canada-pack/__pycache__/
+canada-pack/out/canada.kpack
+canada-pack/out/cgn-index.json
+canada-pack/out/name-index.json
+canada-pack/out/places.jsonl
+canada-pack/out/flan-t5-canada/
+canada-pack/out/flan-runs/
+canada-pack/out/model.npz
+canada-pack/*.zip
+canada-pack/cgn/*.csv
+canada-pack/cgn/*.zip
+canada-pack/geonames/CA.txt
+canada-pack/geonames/*.zip
 

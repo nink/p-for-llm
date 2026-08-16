@@ -10,11 +10,11 @@
   },
   "mercury": {
     "name": "Mercury",
-    "role": "expert-worker",
+    "role": "layer-worker",
     "transport": "uart",
     "uart_hint": "COM6",
     "usb_serial": "5B90158820",
-    "eth_ip": null,
+    "eth_ip": "192.168.72.77",
     "mac": "e8:f6:0a:e0:cb:9c"
   }
 }

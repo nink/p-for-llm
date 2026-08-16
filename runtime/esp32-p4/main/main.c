@@ -1,5 +1,6 @@
 #include <inttypes.h>
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "esp_attr.h"
@@ -30,6 +31,7 @@
 
 #include "llmm_compress.h"
 #include "llmm_eth.h"
+#include "llmm_pack.h"
 
 #ifndef LLMM_HOST_UART
 #define LLMM_HOST_UART 0
@@ -42,8 +44,10 @@
 #define LLMM_HOST_UART_BAUD 460800
 #define LLMM_SD_MOUNT_POINT "/sdcard"
 #define LLMM_SD_PAYLOAD_PATH "/sdcard/pfor-psram.bin"
+#define LLMM_SD_PACK_PATH "/sdcard/canada.kpack"
 #define LLMM_SD_PWR_GPIO GPIO_NUM_45
 #define LLMM_SD_LDO_CHANNEL_ID 4
+#define LLMM_SD_PUT_CHUNK 32768U
 #endif
 
 #define LLMM_CHAT_END_TOKEN 32755U
@@ -196,6 +200,14 @@ extern int llmm_token_step_sampled(const llmm_handle_t *model, uint32_t token, s
                                    llmm_candidate_t *candidates, size_t candidate_capacity, size_t top_k,
                                    float temperature, uint32_t *random_state, float *layer_trace,
                                    uint32_t *next_token, float *next_logit);
+extern int llmm_hidden_layers_step(const llmm_handle_t *model, uint32_t token, size_t position,
+                                   uint32_t layer_begin, uint32_t layer_end, uint32_t prepare_ple, float *hidden,
+                                   float *embedding, float *ple_vector, float *query, float *key, float *attended,
+                                   float *ple_gate, float *expert_gate, float *expert_up, int8_t *keys,
+                                   uint16_t *key_scales, int8_t *values, uint16_t *value_scales,
+                                   size_t cache_capacity, uint8_t *scratch, size_t scratch_bytes,
+                                   uint32_t *routes, size_t routes_len, uint32_t score_output,
+                                   float *layer_trace, uint32_t *next_token, float *next_logit);
 #if LLMM_DEBUG
 extern void llmm_profile_begin(llmm_profile_t *profile);
 extern void llmm_profile_end(void);
@@ -436,6 +448,10 @@ static TaskHandle_t llmm_accel_worker_task;
 #define LLMM_RAW_PROMPT_MAX_BYTES LLMM_RAW_MAX_BYTES
 #define LLMM_TOP_K_MAX 64U
 #define LLMM_WIDTH 192U
+#define LLMM_SPLIT_LAYER 6U
+#define LLMM_HOP_HEADER_BYTES 24U
+#define LLMM_HOP_HIDDEN_BYTES (LLMM_WIDTH * sizeof(float))
+#define LLMM_HOP_FLAG_SESSION 0x1U
 #define LLMM_VOCAB 32768U
 #define LLMM_HEADS 6U
 #define LLMM_KV_HEADS 2U
@@ -939,74 +955,235 @@ static uint32_t llmm_session_tokens(const llmm_runtime_t *runtime)
 }
 
 #if LLMM_HOST_UART
+static sdmmc_card_t *s_sd_card;
+static sd_pwr_ctrl_handle_t s_sd_pwr;
+static SemaphoreHandle_t s_sd_mu;
+static int s_sd_mounted;
+
+static int llmm_sd_ensure_mounted(void)
+{
+    if (s_sd_mu == NULL) {
+        s_sd_mu = xSemaphoreCreateMutex();
+        if (s_sd_mu == NULL) return -1;
+    }
+    if (xSemaphoreTake(s_sd_mu, pdMS_TO_TICKS(20000)) != pdTRUE) return -1;
+    int err = 0;
+    if (!s_sd_mounted) {
+        gpio_config_t power_cfg = {
+            .pin_bit_mask = 1ULL << LLMM_SD_PWR_GPIO,
+            .mode = GPIO_MODE_OUTPUT,
+            .pull_up_en = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type = GPIO_INTR_DISABLE,
+        };
+        if (gpio_config(&power_cfg) != ESP_OK) {
+            err = -2;
+        } else {
+            gpio_set_level(LLMM_SD_PWR_GPIO, 0);
+        }
+        if (err == 0 && s_sd_pwr == NULL) {
+            sd_pwr_ctrl_ldo_config_t ldo_config = {.ldo_chan_id = LLMM_SD_LDO_CHANNEL_ID};
+            if (sd_pwr_ctrl_new_on_chip_ldo(&ldo_config, &s_sd_pwr) != ESP_OK) err = -3;
+        }
+        if (err == 0) {
+            esp_vfs_fat_sdmmc_mount_config_t mount_config = {
+                .format_if_mount_failed = false,
+                .max_files = 4,
+                .allocation_unit_size = 16 * 1024,
+            };
+            sdmmc_host_t host = SDMMC_HOST_DEFAULT();
+            host.slot = SDMMC_HOST_SLOT_0;
+            host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;
+            host.pwr_ctrl_handle = s_sd_pwr;
+            sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
+            slot_config.width = 4;
+            slot_config.clk = GPIO_NUM_43;
+            slot_config.cmd = GPIO_NUM_44;
+            slot_config.d0 = GPIO_NUM_39;
+            slot_config.d1 = GPIO_NUM_40;
+            slot_config.d2 = GPIO_NUM_41;
+            slot_config.d3 = GPIO_NUM_42;
+            slot_config.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
+            sdmmc_card_t *card = NULL;
+            if (esp_vfs_fat_sdmmc_mount(LLMM_SD_MOUNT_POINT, &host, &slot_config, &mount_config, &card) !=
+                ESP_OK) {
+                err = -4;
+            } else {
+                s_sd_card = card;
+                s_sd_mounted = 1;
+            }
+        }
+    }
+    if (err != 0) xSemaphoreGive(s_sd_mu);
+    return err;
+}
+
+static void llmm_sd_unlock(void)
+{
+    if (s_sd_mu != NULL) xSemaphoreGive(s_sd_mu);
+}
+
+static void llmm_sd_release_card(void)
+{
+    if (s_sd_mounted && s_sd_card != NULL) {
+        esp_vfs_fat_sdcard_unmount(LLMM_SD_MOUNT_POINT, s_sd_card);
+        s_sd_card = NULL;
+        s_sd_mounted = 0;
+    }
+}
+
+static FILE *s_pack_put_fp;
+static uint32_t s_pack_put_total;
+static uint8_t s_pack_chunk[LLMM_SD_PUT_CHUNK];
+
+static FILE *s_pack_fp;
+
+static void llmm_pack_close(void)
+{
+    if (s_pack_fp != NULL) {
+        fclose(s_pack_fp);
+        s_pack_fp = NULL;
+    }
+    llmm_pack_index_reset();
+}
+
+static void llmm_usb_pack_done(int status, const char *text)
+{
+    uint8_t frame[16] = {'L', 'L', 'M', 'P', 'A', 'K', 'D', '5'};
+    const int32_t wire_status = status;
+    uint32_t alen = 0;
+    if (status == 0 && text != NULL) alen = (uint32_t)strlen(text);
+    memcpy(frame + 8, &wire_status, sizeof(wire_status));
+    memcpy(frame + 12, &alen, sizeof(alen));
+    if (llmm_usb_write_exact(frame, sizeof(frame)) == 0 && alen > 0) {
+        (void)llmm_usb_write_exact(text, alen);
+    }
+}
+
+static void llmm_handle_pack(void)
+{
+    uint8_t req[4];
+    if (llmm_usb_read_exact(req, sizeof(req)) != 0) {
+        llmm_usb_pack_done(-300, NULL);
+        return;
+    }
+    uint32_t qlen = 0;
+    memcpy(&qlen, req, sizeof(qlen));
+    if (qlen == 0 || qlen > LLMM_PACK_Q_MAX) {
+        llmm_usb_pack_done(-301, NULL);
+        return;
+    }
+    char question[LLMM_PACK_Q_MAX + 1];
+    if (llmm_usb_read_exact(question, qlen) != 0) {
+        llmm_usb_pack_done(-302, NULL);
+        return;
+    }
+    question[qlen] = 0;
+
+    int mount = llmm_sd_ensure_mounted();
+    if (mount != 0) {
+        llmm_usb_pack_done(-310 + mount, NULL);
+        return;
+    }
+    FILE *fp = s_pack_fp;
+    if (fp == NULL) {
+        fp = fopen(LLMM_SD_PACK_PATH, "rb");
+        s_pack_fp = fp;
+    }
+    if (fp == NULL) {
+        llmm_sd_unlock();
+        llmm_usb_pack_done(-304, NULL);
+        return;
+    }
+    char answer[LLMM_PACK_A_MAX];
+    int status = llmm_pack_answer(fp, question, answer, sizeof(answer));
+    llmm_sd_unlock();
+    if (status != 0) {
+        llmm_usb_pack_done(status, NULL);
+        return;
+    }
+    llmm_usb_pack_done(0, answer);
+}
+
+static void llmm_handle_pack_put(void)
+{
+    uint8_t req[12];
+    if (llmm_usb_read_exact(req, sizeof(req)) != 0) {
+        llmm_usb_control_status("LLMPUTD5", -320);
+        return;
+    }
+    uint32_t total = 0, offset = 0, nbytes = 0;
+    memcpy(&total, req, 4);
+    memcpy(&offset, req + 4, 4);
+    memcpy(&nbytes, req + 8, 4);
+    if (nbytes == 0 || nbytes > LLMM_SD_PUT_CHUNK || total == 0 || offset + nbytes > total) {
+        if (nbytes > 0 && nbytes <= LLMM_SD_PUT_CHUNK) {
+            (void)llmm_usb_read_exact(s_pack_chunk, nbytes);
+        }
+        llmm_usb_control_status("LLMPUTD5", -321);
+        return;
+    }
+    if (llmm_usb_read_exact(s_pack_chunk, nbytes) != 0) {
+        llmm_usb_control_status("LLMPUTD5", -322);
+        return;
+    }
+    int mount = llmm_sd_ensure_mounted();
+    if (mount != 0) {
+        llmm_usb_control_status("LLMPUTD5", -330 + mount);
+        return;
+    }
+    int status = 0;
+    if (offset == 0U) {
+        llmm_pack_close();
+        if (s_pack_put_fp != NULL) {
+            fclose(s_pack_put_fp);
+            s_pack_put_fp = NULL;
+        }
+        s_pack_put_fp = fopen(LLMM_SD_PACK_PATH, "wb");
+        s_pack_put_total = total;
+    }
+    if (s_pack_put_fp == NULL) {
+        status = -324;
+    } else if (s_pack_put_total != total) {
+        status = -327;
+    } else if ((uint32_t)ftell(s_pack_put_fp) != offset &&
+               fseek(s_pack_put_fp, (long)offset, SEEK_SET) != 0) {
+        status = -325;
+    } else if (fwrite(s_pack_chunk, 1, nbytes, s_pack_put_fp) != nbytes) {
+        status = -326;
+    }
+    if (s_pack_put_fp != NULL && (status != 0 || offset + nbytes >= total)) {
+        fclose(s_pack_put_fp);
+        s_pack_put_fp = NULL;
+    }
+    llmm_sd_unlock();
+    llmm_usb_control_status("LLMPUTD5", status);
+}
+
 static int llmm_try_load_sd(llmm_runtime_t *runtime)
 {
     if (runtime->psram_payload == NULL || runtime->model.psram_bytes == 0) {
         return -1;
     }
 
-    gpio_config_t power_cfg = {
-        .pin_bit_mask = 1ULL << LLMM_SD_PWR_GPIO,
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    if (gpio_config(&power_cfg) != ESP_OK) {
-        return -2;
-    }
-    // Waveshare ESP32-P4-ETH: GPIO45 low enables TF card power switch.
-    gpio_set_level(LLMM_SD_PWR_GPIO, 0);
-
-    sd_pwr_ctrl_ldo_config_t ldo_config = {
-        .ldo_chan_id = LLMM_SD_LDO_CHANNEL_ID,
-    };
-    sd_pwr_ctrl_handle_t pwr_ctrl_handle = NULL;
-    if (sd_pwr_ctrl_new_on_chip_ldo(&ldo_config, &pwr_ctrl_handle) != ESP_OK) {
-        return -3;
-    }
-
-    esp_vfs_fat_sdmmc_mount_config_t mount_config = {
-        .format_if_mount_failed = false,
-        .max_files = 4,
-        .allocation_unit_size = 16 * 1024,
-    };
-    sdmmc_host_t host = SDMMC_HOST_DEFAULT();
-    host.slot = SDMMC_HOST_SLOT_0;
-    host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;
-    host.pwr_ctrl_handle = pwr_ctrl_handle;
-
-    sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
-    slot_config.width = 4;
-    slot_config.clk = GPIO_NUM_43;
-    slot_config.cmd = GPIO_NUM_44;
-    slot_config.d0 = GPIO_NUM_39;
-    slot_config.d1 = GPIO_NUM_40;
-    slot_config.d2 = GPIO_NUM_41;
-    slot_config.d3 = GPIO_NUM_42;
-    slot_config.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
-
-    sdmmc_card_t *card = NULL;
-    esp_err_t err = esp_vfs_fat_sdmmc_mount(LLMM_SD_MOUNT_POINT, &host, &slot_config, &mount_config, &card);
-    if (err != ESP_OK) {
-        return -4;
-    }
+    int mount = llmm_sd_ensure_mounted();
+    if (mount != 0) return mount;
 
     FILE *file = fopen(LLMM_SD_PAYLOAD_PATH, "rb");
     if (file == NULL) {
-        esp_vfs_fat_sdcard_unmount(LLMM_SD_MOUNT_POINT, card);
+        llmm_sd_unlock();
         return -5;
     }
 
     uint8_t header[16];
     if (fread(header, 1, sizeof(header), file) != sizeof(header)) {
         fclose(file);
-        esp_vfs_fat_sdcard_unmount(LLMM_SD_MOUNT_POINT, card);
+        llmm_sd_unlock();
         return -6;
     }
     if (memcmp(header, "P4SD", 4) != 0) {
         fclose(file);
-        esp_vfs_fat_sdcard_unmount(LLMM_SD_MOUNT_POINT, card);
+        llmm_sd_unlock();
         return -7;
     }
 
@@ -1018,19 +1195,19 @@ static int llmm_try_load_sd(llmm_runtime_t *runtime)
     memcpy(&expected_crc, header + 12, sizeof(expected_crc));
     if (version != 1U || payload_bytes != (uint32_t)runtime->model.psram_bytes) {
         fclose(file);
-        esp_vfs_fat_sdcard_unmount(LLMM_SD_MOUNT_POINT, card);
+        llmm_sd_unlock();
         return -8;
     }
 
     size_t got = fread(runtime->psram_payload, 1, payload_bytes, file);
     fclose(file);
     if (got != payload_bytes) {
-        esp_vfs_fat_sdcard_unmount(LLMM_SD_MOUNT_POINT, card);
+        llmm_sd_unlock();
         return -9;
     }
 
     uint32_t actual_crc = esp_rom_crc32_le(0, runtime->psram_payload, payload_bytes);
-    esp_vfs_fat_sdcard_unmount(LLMM_SD_MOUNT_POINT, card);
+    llmm_sd_unlock();
     if (actual_crc != expected_crc) {
         return -10;
     }
@@ -1342,6 +1519,153 @@ static void llmm_handle_text(llmm_runtime_t *runtime
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 }
 
+static int llmm_run_hidden_layers(llmm_runtime_t *runtime, uint32_t token, size_t position,
+                                  uint32_t layer_begin, uint32_t layer_end, uint32_t prepare_ple,
+                                  uint32_t score_output, uint32_t *next_token, float *next_logit)
+{
+    llmm_layer_workspace_t *workspace = runtime->workspace;
+    llmm_inference_state_t *state = &runtime->state;
+    return llmm_hidden_layers_step(
+        &runtime->model, token, position, layer_begin, layer_end, prepare_ple,
+        workspace->hidden, workspace->embedding, workspace->ple_vector, workspace->query,
+        workspace->key, workspace->attended, workspace->ple_gate, workspace->expert_gate,
+        workspace->expert_up, state->keys, state->key_scales, state->values, state->value_scales,
+        LLMM_KV_CONTEXT, workspace->scratch, sizeof(workspace->scratch),
+#if LLMM_DEBUG
+        state->routes, LLMM_LAYERS,
+#else
+        NULL, 0U,
+#endif
+        score_output, NULL, next_token, next_logit);
+}
+
+static void llmm_usb_hop_done(int status, uint32_t next_token, float next_logit,
+                              uint32_t elapsed_us, uint32_t position, const float *hidden)
+{
+    uint8_t frame[28] = {'L','L','M','H','O','K','0','5'};
+    const int32_t wire_status = status;
+    memcpy(frame + 8, &wire_status, sizeof(wire_status));
+    memcpy(frame + 12, &next_token, sizeof(next_token));
+    memcpy(frame + 16, &next_logit, sizeof(next_logit));
+    memcpy(frame + 20, &elapsed_us, sizeof(elapsed_us));
+    memcpy(frame + 24, &position, sizeof(position));
+    if (llmm_usb_write_exact(frame, sizeof(frame)) == 0) {
+        (void)llmm_usb_write_exact(hidden, LLMM_HOP_HIDDEN_BYTES);
+    }
+}
+
+static void llmm_handle_hop(llmm_runtime_t *runtime)
+{
+    uint8_t request[LLMM_HOP_HEADER_BYTES];
+    if (llmm_usb_read_exact(request, sizeof(request)) != 0) {
+        float zeros[LLMM_WIDTH] = {0};
+        llmm_usb_hop_done(-270, 0, 0.0f, 0, 0, zeros);
+        return;
+    }
+
+    uint32_t token;
+    uint32_t position;
+    uint32_t layer_begin;
+    uint32_t layer_end;
+    uint32_t score_output;
+    uint32_t flags;
+    memcpy(&token, request, sizeof(token));
+    memcpy(&position, request + 4, sizeof(position));
+    memcpy(&layer_begin, request + 8, sizeof(layer_begin));
+    memcpy(&layer_end, request + 12, sizeof(layer_end));
+    memcpy(&score_output, request + 16, sizeof(score_output));
+    memcpy(&flags, request + 20, sizeof(flags));
+
+    int status = runtime->loaded != 0U ? 0 : -271;
+    if (status == 0 && llmm_usb_read_exact(runtime->workspace->hidden, LLMM_HOP_HIDDEN_BYTES) != 0) {
+        status = -272;
+    }
+    if (status == 0 && (flags & LLMM_HOP_FLAG_SESSION) != 0U) {
+        position = (uint32_t)runtime->state.position;
+    }
+    if (status == 0 && (token >= LLMM_VOCAB || position >= LLMM_KV_CONTEXT ||
+                        layer_begin >= layer_end || layer_end > LLMM_LAYERS ||
+                        score_output > 1U)) {
+        status = -273;
+    }
+
+    uint32_t next_token = 0;
+    float next_logit = 0.0f;
+    const int64_t started_us = esp_timer_get_time();
+    if (status == 0) {
+        const uint32_t prepare_ple = layer_begin == 0U ? 2U : 1U;
+        status = llmm_run_hidden_layers(runtime, token, position, layer_begin, layer_end,
+                                        prepare_ple, score_output, &next_token, &next_logit);
+        if (status == 0 && (flags & LLMM_HOP_FLAG_SESSION) != 0U) {
+            runtime->state.position += 1U;
+        }
+    }
+    const uint32_t elapsed_us = (uint32_t)(esp_timer_get_time() - started_us);
+    llmm_usb_hop_done(status, next_token, next_logit, elapsed_us, position, runtime->workspace->hidden);
+}
+
+static void llmm_handle_split_loopback(llmm_runtime_t *runtime)
+{
+    uint8_t request[8];
+    uint8_t frame[32] = {'L','L','M','H','S','L','D','5'};
+    if (llmm_usb_read_exact(request, sizeof(request)) != 0) {
+        const int32_t wire_status = -280;
+        memcpy(frame + 8, &wire_status, sizeof(wire_status));
+        (void)llmm_usb_write_exact(frame, sizeof(frame));
+        return;
+    }
+
+    uint32_t token;
+    uint32_t split_layer;
+    memcpy(&token, request, sizeof(token));
+    memcpy(&split_layer, request + 4, sizeof(split_layer));
+
+    int status = runtime->loaded != 0U ? 0 : -281;
+    if (status == 0 && (token >= LLMM_VOCAB || split_layer == 0U || split_layer >= LLMM_LAYERS)) {
+        status = -282;
+    }
+
+    uint32_t split_token = 0;
+    uint32_t full_token = 0;
+    uint32_t tokens_match = 0;
+    float max_abs_diff = 0.0f;
+    float split_hidden[LLMM_WIDTH];
+    float next_logit = 0.0f;
+    const int64_t started_us = esp_timer_get_time();
+    if (status == 0) {
+        llmm_session_clear(runtime);
+        status = llmm_run_hidden_layers(runtime, token, 0U, 0U, split_layer, 2U, 0U,
+                                        &split_token, &next_logit);
+        if (status == 0) {
+            status = llmm_run_hidden_layers(runtime, token, 0U, split_layer, LLMM_LAYERS, 0U, 1U,
+                                            &split_token, &next_logit);
+        }
+        if (status == 0) {
+            memcpy(split_hidden, runtime->workspace->hidden, sizeof(split_hidden));
+            llmm_session_clear(runtime);
+            status = llmm_run_hidden_layers(runtime, token, 0U, 0U, LLMM_LAYERS, 2U, 1U,
+                                            &full_token, &next_logit);
+        }
+        if (status == 0) {
+            for (uint32_t index = 0; index < LLMM_WIDTH; ++index) {
+                const float diff = fabsf(split_hidden[index] - runtime->workspace->hidden[index]);
+                if (diff > max_abs_diff) max_abs_diff = diff;
+            }
+            tokens_match = split_token == full_token ? 1U : 0U;
+        }
+        llmm_session_clear(runtime);
+    }
+    const uint32_t elapsed_us = (uint32_t)(esp_timer_get_time() - started_us);
+    const int32_t wire_status = status;
+    memcpy(frame + 8, &wire_status, sizeof(wire_status));
+    memcpy(frame + 12, &tokens_match, sizeof(tokens_match));
+    memcpy(frame + 16, &split_token, sizeof(split_token));
+    memcpy(frame + 20, &full_token, sizeof(full_token));
+    memcpy(frame + 24, &max_abs_diff, sizeof(max_abs_diff));
+    memcpy(frame + 28, &elapsed_us, sizeof(elapsed_us));
+    (void)llmm_usb_write_exact(frame, sizeof(frame));
+}
+
 #if LLMM_HOST_UART
 static void llmm_eth_start_task(void *arg)
 {
@@ -1403,6 +1727,16 @@ static void run_llmm_usb_inference(void)
             llmm_handle_text(&runtime, 1U);
 #else
             llmm_handle_text(&runtime);
+#endif
+        } else if (memcmp(command, "LLMHOP05", 8) == 0) {
+            llmm_handle_hop(&runtime);
+        } else if (memcmp(command, "LLMHSL05", 8) == 0) {
+            llmm_handle_split_loopback(&runtime);
+#if LLMM_HOST_UART
+        } else if (memcmp(command, "LLMPAK05", 8) == 0) {
+            llmm_handle_pack();
+        } else if (memcmp(command, "LLMPUT05", 8) == 0) {
+            llmm_handle_pack_put();
 #endif
         } else {
             ESP_LOGE("llmm-usb", "unknown command");

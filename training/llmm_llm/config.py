@@ -16,6 +16,7 @@ class ModelConfig:
     rms_norm_eps: float = 1e-5
     router_balance_loss_coefficient: float = 0.01
     router_z_loss_coefficient: float = 0.001
+    router_top_k: int = 1
 
     def __post_init__(self) -> None:
         if self.d_model % self.n_heads != 0:
@@ -41,6 +42,8 @@ class ModelConfig:
             self.router_z_loss_coefficient,
         ) < 0.0:
             raise ValueError("router loss coefficients must be non-negative")
+        if not 1 <= self.router_top_k <= self.n_experts:
+            raise ValueError("router_top_k must be between 1 and n_experts")
 
     @property
     def head_dim(self) -> int:

@@ -30,6 +30,7 @@ from data.sft import SFTDataPool, load_sft_pool
 from .checkpoint import (
     TrainingState,
     latest_training_checkpoint,
+    load_model_weights_only,
     load_training_checkpoint,
     save_training_checkpoint,
     training_checkpoint_path,
@@ -372,6 +373,9 @@ def _sft_batch_size(bucket_length: int, sft_batch_size: int) -> int:
     return sft_batch_size
 
 
+SFT_RUNTIME_LENGTH = 1024
+
+
 def _sft_batches(
     pool: SFTDataPool,
     split: Literal["train", "validation"],
@@ -396,6 +400,16 @@ def _sft_batches(
             np.arange(bucket_length, dtype=np.uint16)[None, :]
             < lengths[:, None]
         )
+        # CUDA prefetch and torch.compile(dynamic=False) need one sequence
+        # length. Right-pad shorter SFT buckets; causal attention keeps the
+        # real tokens unchanged, and pad labels stay -100.
+        if bucket_length < SFT_RUNTIME_LENGTH:
+            pad = SFT_RUNTIME_LENGTH - bucket_length
+            token_ids = np.pad(token_ids, ((0, 0), (0, pad)), constant_values=0)
+            labels = np.pad(labels, ((0, 0), (0, pad)), constant_values=-100)
+            valid_mask = np.pad(
+                valid_mask, ((0, 0), (0, pad)), constant_values=False
+            )
         yield TrainingBatch(
             token_ids,
             labels,
@@ -567,6 +581,8 @@ def _validate_arguments(args: argparse.Namespace) -> None:
         raise ValueError("batch_size must be 32")
     if args.learning_rate <= 0.0:
         raise ValueError("learning_rate must be positive")
+    if args.n_layers is not None and args.n_layers <= 0:
+        raise ValueError("n_layers must be positive")
     if not 0.0 <= args.warmup_ratio <= 1.0:
         raise ValueError("warmup_ratio must be in [0, 1]")
     if not 0.0 < args.validation_fraction < 1.0:
@@ -586,6 +602,10 @@ def _validate_arguments(args: argparse.Namespace) -> None:
         raise ValueError("--sft-pool and --sft-transition require --stage sft")
     if args.sft_transition and args.resume_from is None:
         raise ValueError("--sft-transition requires --resume-from")
+    if args.router_top_k < 1:
+        raise ValueError("router_top_k must be at least 1")
+    if args.resume_weights is not None and not args.resume_weights.is_file():
+        raise ValueError(f"--resume-weights does not exist: {args.resume_weights}")
 
 
 def _load_replay_profile(args: argparse.Namespace) -> DataProfile:
@@ -639,9 +659,12 @@ def _run_contract(
             "ple_table": "SparseAdam without weight decay",
             "ple_absmean": "exact incremental tensor-wide scale",
         },
-        "training_loss": "exact causal CE plus Top-1 router auxiliary losses",
+        "training_loss": (
+            f"exact causal CE plus Top-{config.router_top_k} router auxiliary losses"
+        ),
         "router": {
-            "routing": "dropless Top-1",
+            "routing": f"dropless Top-{config.router_top_k}",
+            "top_k": config.router_top_k,
             "experts_per_layer": config.n_experts,
             "balance_loss_coefficient": (
                 config.router_balance_loss_coefficient
@@ -784,6 +807,12 @@ def train(args: argparse.Namespace) -> list[float]:
         if args.model == "tiny"
         else ModelConfig()
     )
+    if args.n_layers is not None:
+        if args.model != "main":
+            raise ValueError("--n-layers is only valid with --model main")
+        config = replace(config, n_layers=args.n_layers)
+    if args.router_top_k != config.router_top_k:
+        config = replace(config, router_top_k=args.router_top_k)
     if vocab_size != config.vocab_size:
         raise ValueError(
             f"tokenizer vocabulary has {vocab_size} entries; "
@@ -975,6 +1004,12 @@ def train(args: argparse.Namespace) -> list[float]:
             f"resumed_from={resume_from} step={state.step} "
             f"tokens={state.tokens_seen:,} schedule_step={state.schedule_step:,}"
         )
+    elif args.resume_weights is not None:
+        load_model_weights_only(args.resume_weights, model, device)
+        print(
+            f"loaded_weights={args.resume_weights} fresh_optimizer=True "
+            f"router_top_k={config.router_top_k}"
+        )
     dense_stepper = (
         CachedFusedAdamW(
             dense_optimizer,
@@ -1013,6 +1048,7 @@ def train(args: argparse.Namespace) -> list[float]:
     precision = "bf16" if device.type == "cuda" else "fp32"
     print(
         f"device={device.type} precision={precision} model={args.model} "
+        f"n_layers={config.n_layers} "
         f"quantization={QUANTIZATION_FORMAT} parameters={model.parameter_count():,}"
     )
     if profile is not None and pool is not None:
@@ -1389,6 +1425,12 @@ def train(args: argparse.Namespace) -> list[float]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Train the LLMM reference model")
     parser.add_argument("--model", choices=("tiny", "main"), default="main")
+    parser.add_argument(
+        "--n-layers",
+        type=int,
+        default=None,
+        help="Override ModelConfig.n_layers (main only). Use 24 for the two-board depth upcycle.",
+    )
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     parser.add_argument("--stage", choices=("base", "sft"), default="base")
     parser.add_argument("--data-profile", default="local")
@@ -1425,6 +1467,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint-dir", type=Path)
     parser.add_argument("--checkpoint-interval", type=int, default=1_000)
     parser.add_argument("--resume-from", type=Path)
+    parser.add_argument(
+        "--resume-weights",
+        type=Path,
+        help="Load model tensors only (fresh optimizer). Used to continue the reconstructed original.",
+    )
+    parser.add_argument(
+        "--router-top-k",
+        type=int,
+        default=1,
+        help="Experts active per token (1 = shipped PFor, 2 = single-board top-2).",
+    )
     parser.add_argument("--capability-plan", type=Path)
     parser.add_argument("--capability-wave")
     parser.add_argument("--capability-transition", action="store_true")
